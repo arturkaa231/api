@@ -9,7 +9,7 @@ from CH.forms import RequestForm
 import pprint
 @csrf_exempt
 def main(request):
-    def RecStats(n,i,updimensions,table):
+    def RecStats(n,i,updimensions,table,up_dim_info):
         """Рекурсивный метод для добавления вложенных структур в stats"""
         #Добавляем фильтры
         try:
@@ -25,25 +25,35 @@ def main(request):
         except:
             pass
         sub=[]
-        num_seg = 0
-        for i in dimensionslist_with_segments[n+1:]:
-            if 'segment' in i:
-                num_seg += 1
-            else:
-                break
-        for num in range(n+1,n+1+num_seg):
+        if type(dimensionslist_with_segments[n+1]) == list:
+            num_seg = len(dimensionslist_with_segments[n+1])
+        else:
+            num_seg = 0
+        #Добавляем информацию о верхнем уровне в группу сегментов
+        if (num_seg!=0 or 'segment' in dimensionslist_with_segments[n+1]) and up_dim_info != 1:
+            up_dim_info['label']='Все данные'
+            sub.append(up_dim_info)
+        for num in range(num_seg):
             array_dates = []
-            seg_filt = segments[int(dimensionslist_with_segments[num][7:]) - 1]['segment_filt']
+            updimensions = []
+            seg = json.loads(requests.get(
+                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dimensionslist_with_segments[n+1][num][7:])),
+                headers=headers).content.decode('utf-8'))['real_definition']
+            seg_filt = seg.partition("==")[0] + "=='" + seg.partition("==")[2] + "'"
+            seg_label = json.loads(requests.get(
+                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dimensionslist_with_segments[n+1][num][7:])),
+                headers=headers).content.decode('utf-8'))['name']
             updimensions.append(seg_filt)
             updimensions.append(seg_filt)
             updm = ' AND '.join(updimensions)
+            counter=0
             for date in period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
                                                                       WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {updimensions}
                                                                       FORMAT JSON
                                                                     '''.format(
-                    label_val=segments[int(dimensionslist_with_segments[num][7:]) - 1]['label'],
-                    segment_val=segments[int(dimensionslist_with_segments[num][7:]) - 1]['segment'],
+                    label_val=seg_label,
+                    segment_val=seg,
                     updimensions=updm,
                     metric_counts=metric_counts,
                     date1=date['date1'],
@@ -51,32 +61,107 @@ def main(request):
                     table=table, date_field=date_field)
 
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
-
+                # Если сегмент пуст, добавляем нулевые значение в dates
+                if array_dates[counter] == []:
+                    empty_dict = {'label': seg_label,
+                                  'segment': seg}
+                    for metric in metrics:
+                        empty_dict[metric] = 0
+                    array_dates[counter].append(empty_dict)
+                counter+=1
+            counter=0
             for i in array_dates[0]:
                 stat_dict = {'label': i['label'],
                              'segment': i['segment']}
                 dates = []
-                metrics_dict = dict.fromkeys(metrics)
+
                 for m in range(len(array_dates)):
-                    for (j, k) in zip(metrics_dict, i):
-                        metrics_dict[j] = i[j]
+                    metrics_dict = dict.fromkeys(metrics)
+                    for j in metrics_dict:
+                        try:
+                            metrics_dict[j] = array_dates[m][counter][j]
+                        except:
+                            metrics_dict[j]=0
                     dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
                 stat_dict['dates'] = dates
-                if len(dimensionslist_with_segments) > n+1+num_seg:
+                if len(dimensionslist_with_segments) > n+2:
                     # Добавляем подуровень
-                    stat_dict['sub'] = RecStats(n+num_seg, i, updimensions, table)
+                    stat_dict['sub'] = RecStats(n+1, i, updimensions, table,1)
                 sub.append(stat_dict)
-        if num_seg==0:
+                counter+=1
+        # Если dimension является сегментом(не группой сегментов а отдельным сегментом):
+        if 'segment' in dimensionslist_with_segments[n+1]:
+            array_dates = []
+            array_dates = []
+            updimensions = []
+            seg = json.loads(requests.get(
+                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dimensionslist_with_segments[n+1][7:])),
+                headers=headers).content.decode('utf-8'))['real_definition']
+            seg_filt = seg.partition("==")[0] + "=='" + seg.partition("==")[2] + "'"
+            seg_label = json.loads(requests.get(
+                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dimensionslist_with_segments[n+1][7:])),
+                headers=headers).content.decode('utf-8'))['name']
+            updimensions.append(seg_filt)
+            updimensions.append(seg_filt)
+            updm = ' AND '.join(updimensions)
+            for date in period:
+                q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
+                                                                             WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt} AND {updm}
+                                                                             FORMAT JSON
+                                                                           '''.format(
+                    label_val=seg_label,
+                    segment_val=seg,
+                    seg_filt=seg_filt,
+                    updm=updm,
+                    metric_counts=metric_counts,
+                    date1=date['date1'],
+                    date2=date['date2'], filt=filt,
+                    table=table, date_field=date_field)
+                array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                if array_dates[0]==[]:
+                    empty_dict={'label':seg_label,
+                                           'segment':seg}
+                    for metric in metrics:
+                        empty_dict[metric]=0
+                    array_dates[0].append(empty_dict)
+            counter=0
+            for i in array_dates[0]:
+                stat_dict = {'label': i['label'],
+                             'segment': i['segment'], }
+                dates = []
+
+                for m in range(len(array_dates)):
+                    metrics_dict = dict.fromkeys(metrics)
+                    for j in metrics_dict:
+                        try:
+                            metrics_dict[j] = array_dates[m][counter][j]
+                        except:
+                            metrics_dict[j]=0
+                    dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
+                stat_dict['dates'] = dates
+                # если размер dimensions больше 1, заполняем подуровень
+                if len(dimensionslist_with_segments) > n+2:
+                    # Добавляем подуровень
+                    up_dim = stat_dict.copy()
+                    stat_dict['sub'] = RecStats(n+1, i, updimensions, table, up_dim)
+                sub.append(stat_dict)
+                counter+=1
+        elif num_seg==0:
             array_dates = []
             updm=' AND '.join(updimensions)
             dimension = dimensionslist_with_segments[n + 1]
+            if sort_column == "":
+                sort_column_in_query = dimension
+            else:
+                sort_column_in_query = sort_column
             for date in period:
                 q = '''SELECT {dimension},{metric_counts} FROM {table}
                                                                     WHERE 1 {filt} AND {updimensions} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                                                     GROUP BY {dimension} {having}
+                                                                    ORDER BY {sort_column} {sort_order}
                                                                     FORMAT JSON
                                                                     '''.format(dimension=dimension,
-                                                                               updimensions=updm,
+                                                                               updimensions=updm,sort_column=sort_column_in_query,sort_order=sort_order,
                                                                                metric_counts=metric_counts,
                                                                                date1=date['date1'],
                                                                                date2=date['date2'], filt=filt,
@@ -84,18 +169,27 @@ def main(request):
                                                                                date_field=date_field)
 
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+            counter=0
             for i2 in array_dates[0]:
-                stat_dict = {'label': i2[dimensionslist_with_segments[n + 1]]}
+                stat_dict = {'label': i2[dimensionslist_with_segments[n + 1]],
+                             'segment':'{label}=={value}'.format(label=dimensionslist_with_segments[n + 1]
+                                                                 ,value=i2[dimensionslist_with_segments[n + 1]])}
                 dates = []
-                metrics_dict = dict.fromkeys(metrics)
+
                 for m in range(len(array_dates)):
-                    for (j, k) in zip(metrics_dict, i2):
-                        metrics_dict[j] = i2[j]
+                    metrics_dict = dict.fromkeys(metrics)
+                    for j in metrics_dict:
+                        try:
+                            metrics_dict[j] = array_dates[m][counter][j]
+                        except:
+                            metrics_dict[j]=0
                     dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
                 stat_dict['dates'] = dates
                 if n != len(dimensionslist_with_segments) - 2:
-                    stat_dict['sub'] = RecStats(n + 1, i2, updimensions, table)
+                    up_dim=stat_dict.copy()#Передаем словарь с информацией о вернем уровне "Все файлы"
+                    stat_dict['sub'] = RecStats(n + 1, i2, updimensions, table,up_dim)
                 sub.append(stat_dict)
+                counter+=1
         return sub
     def get_clickhouse_data(query,host,connection_timeout=1500):
         """Метод для обращения к базе данных CH"""
@@ -103,30 +197,29 @@ def main(request):
         return r.text
     def AddCounts(period,dimension_counts,filt,sort_order,table):
         """Добавление ключа Counts в ответ"""
-        dates = []
-        for date in period:
-            q = ''' SELECT {dimension_counts}
+        date_filt=[]
+        for dates in period:
+            date_filt.append("({date_field} BETWEEN '".format(date_field=date_field)+str(dates['date1'])+"' AND '"+str(dates['date2'])+"')")
+        date_filt=' OR '.join(date_filt)
+        if date_filt==[]:
+            date_filt=1
+
+        q = ''' SELECT {dimension_counts}
                      FROM {table}
-                     WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                     WHERE 1 {filt} AND {date_filt}
                      ORDER BY NULL {sort_order}
                      FORMAT JSON
-                    '''.format(date1=date['date1'], date2=date['date2'], dimension_counts=dimension_counts, filt=filt,
-                               sort_order=sort_order,table=table,date_field=date_field)
+                    '''.format(date1=period[0]['date1'], date2=period[0]['date2'], dimension_counts=dimension_counts, filt=filt,
+                               sort_order=sort_order,table=table,date_filt=date_filt)
 
             # Объеденяем словарь с датами со словарем  вернувшихся значений каждого из запрошенных параметров
-            try:
-                a = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+        try:
+            a = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
             #заменяем словарь с uniqExact(dimension) на dimension
-                b=dict.fromkeys(dimensionslist)
-                for i in dimensionslist:
-                    b[i]=a['uniqExact({name})'.format(name=i)]
-            except:
-                b=dict.fromkeys(dimensionslist,0)
-                print(b)
 
-            b.update(date)
-            dates.append(b)
-        return dates
+        except:
+            a=dict.fromkeys(dimensionslist,0)
+        return a
     def AddMetricSums(period,metric_counts,filt,metrics,sort_order,table):
         """Добавление ключа metric_sums в ответ"""
         dates = []
@@ -165,6 +258,38 @@ def main(request):
             metric_dict.update(date)
             dates.append(metric_dict)
         return dates
+    def AddMetricSumsWithFilt(period,metric_counts,filt,metrics,sort_order,table):
+        ar_d=[]
+        for date in period:
+            t = '''SELECT {metric_counts} FROM {table}
+                    WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                    FORMAT JSON
+                    '''.format(
+                metric_counts=metric_counts,
+                date1=date['date1'],
+                date2=date['date2'], filt=filt,
+                table=table, date_field=date_field)
+
+            ar_d.append(json.loads(get_clickhouse_data(t, 'http://85.143.172.199:8123'))['data'])
+        counter=0
+        for i in ar_d[0]:
+            try:
+                st_d = {'label': 'Все данные',
+                            'segment': filter.replace(',',' OR ').replace(';',' AND ') }
+            except:
+                st_d = {'label': 'Все данные',
+                             'segment': ''}
+
+            dates = []
+
+            for m in range(len(ar_d)):
+                metrics_dict = dict.fromkeys(metrics)
+                for j in metrics_dict:
+                    metrics_dict[j] = ar_d[m][counter][j]
+                dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
+            st_d['dates'] = dates
+            counter+=1
+        return st_d
     def AddStats(dim,metric_counts,filt,limit,having,period,metrics,table):
         """Добавление ключа stats в ответ без сегментов"""
 
@@ -221,79 +346,103 @@ def main(request):
                 stat_dict['sub'] = RecStats(0, i, updimensions,table)
             stats.append(stat_dict)
         return stats
-
     def AddStats2(dim, metric_counts, filt, limit, having, period, metrics, table):
         """Добавление ключа stats в ответ"""
         stats = []
-        #Определяем, есть ли вначале dimensions группа сегментов, и если есть, то сколько мегментов стоит подряд
-        num_seg=0
-        for i in  dim:
-            if 'segment' in i:
-                num_seg+=1
-            else:
-                break
-        #Для групп сегментов
-        for num in range(num_seg):
+        #Определяем, есть ли вначале dimensions группа сегментов
+        if type(dim[0])==list:
+            num_seg=len(dim[0])
+        else:
+            num_seg=0
+        if 'segment' in dim[0] or num_seg!=0:
+            stats.append(AddMetricSumsWithFilt(period, metric_counts, filt, metrics, sort_order, table))
+        #Если dimension является сегментом(не группой сегментов а отдельным сегментом):
+        if 'segment' in dim[0]:
+
             array_dates = []
             updimensions = []
-            seg_filt = segments[int(dim[num][7:]) - 1]['segment_filt']
+            seg=json.loads(requests.get('https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[0][7:])),
+                                headers=headers).content.decode('utf-8'))['real_definition']
+            seg_filt=seg.partition("==")[0]+"=='"+seg.partition("==")[2]+"'"
+            seg_label=json.loads(requests.get('https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[0][7:])),
+                                headers=headers).content.decode('utf-8'))['name']
+
             for date in period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
                                                                       WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
                                                                       FORMAT JSON
                                                                     '''.format(
-                                                                                   label_val=segments[int(dim[num][7:]) - 1]['label'],
-                                                                                   segment_val=segments[int(dim[num][7:]) - 1]['segment'],
-                                                                                   seg_filt=seg_filt,
-                                                                                   metric_counts=metric_counts,
-                                                                                   date1=date['date1'],
-                                                                                   date2=date['date2'], filt=filt,
-                                                                                   table=table, date_field=date_field)
+                    label_val=seg_label,
+                    segment_val=seg,
+                    seg_filt=seg_filt,
+                    metric_counts=metric_counts,
+                    date1=date['date1'],
+                    date2=date['date2'], filt=filt,
+                    table=table, date_field=date_field)
 
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+            counter=0
             for i in array_dates[0]:
                 stat_dict = {'label': i['label'],
-                                'segment': i['segment']}
+                                'segment': i['segment'],}
                 dates = []
-                metrics_dict = dict.fromkeys(metrics)
+
                 for m in range(len(array_dates)):
-                    for (j, k) in zip(metrics_dict, i):
-                        metrics_dict[j] = i[j]
+                    metrics_dict = dict.fromkeys(metrics)
+                    for j in metrics_dict:
+                        try:
+                            metrics_dict[j] = array_dates[m][counter][j]
+                        except:
+                            metrics_dict[j]=0
                     dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
                 stat_dict['dates'] = dates
-                # если размер списка  dimensions больше размера группы, заполняем подуровень
-                if len(dim) > num_seg:
+
+                # если размер dimensions больше 1, заполняем подуровень
+                if len(dim) > 1:
                         # Добавляем подуровень
                     updimensions.append(seg_filt)
                     updimensions.append(seg_filt)
-                    stat_dict['sub'] = RecStats(num_seg-1, i, updimensions, table)
+                    up_dim = stat_dict.copy()
+                    stat_dict['sub'] = RecStats(0, i, updimensions, table,up_dim)
                 stats.append(stat_dict)
-
-        #если сегментов вначале списка нет
-        if num_seg==0:
+                counter+=1
+        elif num_seg==0:
             updimensions = []
             array_dates = []
+            if sort_column=="":
+                sort_column_in_query=dim[0]
+            else:
+                sort_column_in_query=sort_column
             for date in period:
-                q = '''SELECT {dimensions},{metric_counts} FROM {table}
+                q = '''SELECT {dimension},{metric_counts} FROM {table}
                                    WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
-                                   GROUP BY {dimensions}  {having}
+                                   GROUP BY {dimension}  {having}
+                                   ORDER BY {sort_column} {sort_order}
                                    {limit}
                                    FORMAT JSON
-                                   '''.format(dimensions=dim[0], metric_counts=metric_counts,
-                                              date1=date['date1'],
-                                              date2=date['date2'], filt=filt, limit=limit,
+                                   '''.format(dimension=dim[0], metric_counts=metric_counts,
+                                              date1=date['date1'],sort_column=sort_column_in_query,
+                                              date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
                                               having=having, table=table, date_field=date_field)
+                print(q)
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+            counter=0
             for i in array_dates[0]:
-
-                stat_dict = {'label': i[dim[0]]}
+                stat_dict = {'label': i[dim[0]],
+                             'segment': '{label}=={value}'.format(label=dim[0]
+                                                                  , value=i[dim[0]])
+                             }
                 #print(stat_dict)
                 dates = []
-                metrics_dict = dict.fromkeys(metrics)
                 for m in range(len(array_dates)):
-                    for (j, k) in zip(metrics_dict, i):
-                        metrics_dict[j] = i[j]
+                    metrics_dict = dict.fromkeys(metrics)
+                    for j in metrics_dict:
+                        try:
+                            metrics_dict[j] = array_dates[m][counter][j]
+                        except:
+                            metrics_dict[j]=0
                     dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
+
                 stat_dict['dates'] = dates
                 if len(dim) > 1:
                     # Добавляем подуровень
@@ -302,10 +451,67 @@ def main(request):
                                                                                        updimension=dim[0]))
                     except:
                         pass
-                    stat_dict['sub'] = RecStats(0, i, updimensions, table)
+                    up_dim=stat_dict.copy()#Передаем словарь с информацией о вернем уровне "Все файлы"
+                    stat_dict['sub'] = RecStats(0, i, updimensions, table,up_dim)
                 stats.append(stat_dict)
+                counter+=1
+        #Для групп сегментов
+        for num in range(num_seg):
+            array_dates = []
+            updimensions = []
+            seg = json.loads(requests.get(
+                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[0][num][7:])),
+                headers=headers).content.decode('utf-8'))['real_definition']
+            seg_filt = seg.partition("==")[0] + "=='" + seg.partition("==")[2] + "'"
+            seg_label = json.loads(requests.get(
+                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[0][num][7:])),
+                headers=headers).content.decode('utf-8'))['name']
+            counter=0
+            for date in period:
+                q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
+                                                                      WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
+                                                                      FORMAT JSON
+                                                                    '''.format(
+                                                                                   label_val=seg_label,
+                                                                                   segment_val=seg,
+                                                                                   seg_filt=seg_filt,
+                                                                                   metric_counts=metric_counts,
+                                                                                   date1=date['date1'],
+                                                                                   date2=date['date2'], filt=filt,
+                                                                                   table=table, date_field=date_field)
+
+                array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                if array_dates[counter] == []:
+                    empty_dict = {'label': seg_label,
+                                  'segment': seg}
+                    for metric in metrics:
+                        empty_dict[metric] = 0
+                    array_dates[counter].append(empty_dict)
+                counter+=1
+            counter = 0
+            for i in array_dates[0]:
+                stat_dict = {'label': i['label'],
+                                'segment': i['segment'],}
+                dates = []
+                for m in range(len(array_dates)):
+                    metrics_dict = dict.fromkeys(metrics)
+                    for j in metrics_dict:
+                        try:
+                            metrics_dict[j] = array_dates[m][counter][j]
+                        except:
+                            metrics_dict[j]=0
+                    dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
+                stat_dict['dates'] = dates
+                # если размер списка  dimensions больше размера группы, заполняем подуровень
+                if len(dim) > 1:
+                        # Добавляем подуровень
+                    updimensions.append(seg_filt)
+                    updimensions.append(seg_filt)
+                    stat_dict['sub'] = RecStats(0, i, updimensions, table,1)
+                stats.append(stat_dict)
+                counter+=1
         return stats
-    def FilterParse(filt_dict):
+    def OldFilterParse(filt_dict):
         """Метод для перевода словаря global_filter в строку для sql запроса"""
         filt=[]
         having=[]
@@ -337,21 +543,82 @@ def main(request):
         filt='AND'.join(filt)
 
         return filt
+    def FilterParse(filt_string):
+        """Метод для перевода  global_filter в строку для sql запроса"""
+        #filt_string=filt_string.replace(',',' OR ')
+        #filt_string = filt_string.replace(';', ' AND ')
+        #print(filt_string.partition('=@'))
+        simple_operators=['==','!=','>=','<=','>','<']
+        like_operators=['=@','!@','=^','=$','!^','!&']
+        like_str=[" LIKE '%{val}%'"," NOT LIKE '%{val}%'"," LIKE '{val}%'"," LIKE '%{val}'"," NOT LIKE '{val}%'"," NOT LIKE '%{val}'"]
+        match_operators=['=~','!~']
+        match_str=[" match({par}?'{val}')"," NOT match({par}?'{val}')"]
+        separator_indices=[]
+        for i in range(len(filt_string)):
+            if filt_string[i]==',' or filt_string[i]==';':
+                separator_indices.append(i)
+        separator_indices.append(len(filt_string))
+        end_filt=""
+        for i in range(len(separator_indices)):
+            if i==0:
+                sub_str = filt_string[0:separator_indices[i]]
+            else:
+                sub_str=filt_string[separator_indices[i-1]+1:separator_indices[i]]
+            for j in simple_operators:
+                if sub_str.partition(j)[2]=='':
+                    pass
+                else:
+                    sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
+                    break
+            for j in range(len(like_operators)):
+                if sub_str.partition(like_operators[j])[2]=='':
+                    pass
+                else:
+                    sub_str = sub_str.partition(like_operators[j])[0] +like_str[j].format(val=sub_str.partition(like_operators[j])[2])
+                    break
+            for j in range(len(match_operators)):
+                if sub_str.partition(match_operators[j])[2]=='':
+                    pass
+                else:
+                    sub_str = match_str[j].format(val=sub_str.partition(match_operators[j])[2],par=sub_str.partition(match_operators[j])[0])
+                    break
+            try:
+                end_filt=end_filt+sub_str+filt_string[separator_indices[i]]
+            except:
+                end_filt = end_filt + sub_str
 
+        end_filt=end_filt.replace(',',' OR ')
+        end_filt=end_filt.replace(';',' AND ')
+        end_filt = end_filt.replace('?', ',')
+        return end_filt
     if request.method=='POST':
+        #Заголовки для запроса сегментов
+        headers = {
+            'Authorization': 'JWT eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxMSwiZW1haWwiOiIiLCJleHAiOjE0NzU3NjQwODAsInVzZXJuYW1lIjoiYXBpIn0.2Pj7lqRxuB6aBd4qgeMCaE_O5qIkm4QDmepcTwioqgA',
+            'Content-Type': 'application/json'}
         #сегменты
         segments=[{'label':'Платный трафик', 'segment':"referrerType == campaign",'segment_filt':"referrerType == 'campaign'"},
             {'label':'Только Россия', 'segment':"countryCode == ru",'segment_filt':"countryCode == 'ru'"},
             {'label':'Только Chrome','segment':"browserName == Chrome",'segment_filt':"browserName == 'Chrome'"}]
-
         # Парсинг json
-        sort_order=json.loads(request.body.decode('utf-8'))['sort_order']
-        dimensionslist_with_segments=json.loads(request.body.decode('utf-8'))['dimensions']
-        dimensionslist = dimensionslist_with_segments.copy()
-        for d in dimensionslist:
-            if 'segment' in d:
-                dimensionslist.remove(d)
+        try:
+            sort_order=json.loads(request.body.decode('utf-8'))['sort_order']
+        except:
+            sort_order=""
+        #сортировка по переданному показателю
+        try:
+            sort_column = json.loads(request.body.decode('utf-8'))['sort_column']
+        except:
+            sort_column=""
 
+
+
+        dimensionslist_with_segments=json.loads(request.body.decode('utf-8'))['dimensions']
+        dimensionslist = []
+        #Создание списка параметров без сегментов
+        for d in dimensionslist_with_segments:
+            if 'segment' not in d and type(d)!=list:
+                dimensionslist.append(d)
         metrics = json.loads(request.body.decode('utf-8'))['metrics']
         #если в запросе не указан сдвиг, зададим его равным нулю
         try:
@@ -360,42 +627,43 @@ def main(request):
             offset='0'
         #если в запросе не указан лимит, зададим его путой строкой, если указан, составим строку LIMIT...
         try:
-            limit = 'LIMIT '+offset+','+json.loads(request.body.decode('utf-8'))['limit']
+            limit = 'LIMIT '+str(offset)+','+str(json.loads(request.body.decode('utf-8'))['limit'])
         except:
             limit=''
 
         period = json.loads(request.body.decode('utf-8'))['periods']
         try:
-            global_filter = json.loads(request.body.decode('utf-8'))['global_filter']
+            filter = json.loads(request.body.decode('utf-8'))['filter']
 
         except:
             filt=" "
         else:
-            filt="AND"+"("+FilterParse(global_filter)+")"
-
+            filt="AND"+"("+FilterParse(filter)+")"
         try:
-            global_filter_metric = json.loads(request.body.decode('utf-8'))['global_filter_metric']
+            filter_metric = json.loads(request.body.decode('utf-8'))['filter_metric']
         except:
             having=" "
         else:
-            having = 'HAVING'+' '+FilterParse(global_filter_metric)
-
-
-        #Проверка на пренадленость параметров к таблице.
-        if dimensionslist[0] in ['adclient','campaign','stat_date','banner',
-                                 'keyword','shows','clicks','spend','utm_source',
-                                 'utm_medium','utm_campaign','utm_term','utm_content']:
-            table = 'CHdatabase.adstat'
-            date_field='stat_date'
-        else:
+            having = 'HAVING'+' '+FilterParse(filter_metric)
+        #если список dimensionslist пуст, значит были переданы только сегменты
+        try:
+            #Проверка на пренадленость параметров к таблице.
+            if dimensionslist[0] in ['adclient','campaign','stat_date','banner',
+                                     'keyword','shows','clicks','spend','utm_source',
+                                     'utm_medium','utm_campaign','utm_term','utm_content']:
+                table = 'CHdatabase.adstat'
+                date_field='stat_date'
+            else:
+                table = 'CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit'
+                date_field = 'serverDate'
+        except:
             table = 'CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
             date_field = 'serverDate'
 
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
         for i in dimensionslist:
-            dimension_counts.append('count(DISTINCT {dimension})'.format(dimension=i))
-
+            dimension_counts.append('uniq({dimension}) as {dimension}'.format(dimension=i))
         dimension_counts=','.join(dimension_counts)
 
         # ФОрмируем массив с sum() для каждого показателя
@@ -404,24 +672,30 @@ def main(request):
             if 'goal' in i:
                 metric_counts.append("sum(Type='goal' AND goalId={N}) as goal{N}".format(N=i[4:]))
             if i=="nb_visits":
-                metric_counts.append('count(*) as nb_visits')
+                metric_counts.append('uniq(idVisit) as nb_visits')
             if i in ['clicks','spend','shows']:
                 metric_counts.append('sum({metric}) as {metric}'.format(metric=i))
             if i=="nb_actions":
                 metric_counts.append('sum(actions) as nb_actions')
+            if i=="nb_visitors":
+                metric_counts.append('uniq(visitorId) as nb_visitors')
         metric_counts=','.join(metric_counts)
+
         #Добавляем в выходной словарь параметр counts
         resp={}#Выходной словарь
         resp['counts'] = {}
-        resp['counts']['dates']=AddCounts(period,dimension_counts,filt,sort_order,table)
+        resp['counts']=AddCounts(period,dimension_counts,filt,sort_order,table)
 
         # Добавляем в выходной словарь параметр metric_sums
         resp['metric_sums']={}
         resp['metric_sums']['dates'] = AddMetricSums(period,metric_counts,filt,metrics,sort_order,table)
+
         # Добавляем stats
         resp['stats']=AddStats2(dimensionslist_with_segments,metric_counts,filt,limit,having,period,metrics,table)
         pprint.pprint(resp)
-        return JsonResponse(resp,safe=False)
+        response=JsonResponse(resp,safe=False,)
+        response['Access-Control-Allow-Origin']='*'
+        return response
     else:
         args={}
         args.update(csrf(request))
