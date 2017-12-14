@@ -9,6 +9,14 @@ from CH.forms import RequestForm
 import pprint
 @csrf_exempt
 def main(request):
+    def MaxLenNum(array_dates):
+        """Возвращает порядок элемента списка с наибольшей длиной"""
+        max_len = 0
+        for array_num in range(len(array_dates)):
+            if len(array_dates[array_num]) > len(array_dates[max_len]):
+                max_len = array_num
+        return(max_len)
+
     def RecStats(n,i,updimensions,table,up_dim_info):
         """Рекурсивный метод для добавления вложенных структур в stats"""
         #Добавляем фильтры
@@ -170,7 +178,7 @@ def main(request):
 
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             counter=0
-            for i2 in array_dates[0]:
+            for i2 in array_dates[MaxLenNum(array_dates)]:
                 stat_dict = {'label': i2[dimensionslist_with_segments[n + 1]],
                              'segment':'{label}=={value}'.format(label=dimensionslist_with_segments[n + 1]
                                                                  ,value=i2[dimensionslist_with_segments[n + 1]])}
@@ -211,15 +219,15 @@ def main(request):
                      FORMAT JSON
                     '''.format(date1=period[0]['date1'], date2=period[0]['date2'], dimension_counts=dimension_counts, filt=filt,
                                sort_order=sort_order,table=table,date_filt=date_filt)
-
             # Объеденяем словарь с датами со словарем  вернувшихся значений каждого из запрошенных параметров
-        try:
-            a = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
-            #заменяем словарь с uniqExact(dimension) на dimension
-
-        except:
-            a=dict.fromkeys(dimensionslist,0)
-        return a
+        a = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+            #изменяем значения показателей на целочисленный тип
+        b={}
+        for key in a.keys():
+            b[key[1:]]=a[key]
+        #except:
+            #a=dict.fromkeys(dimensionslist,0)
+        return b
     def AddMetricSums(period,metric_counts,filt,metrics,sort_order,table):
         """Добавление ключа metric_sums в ответ"""
         dates = []
@@ -381,6 +389,7 @@ def main(request):
                     table=table, date_field=date_field)
 
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+
             counter=0
             for i in array_dates[0]:
                 stat_dict = {'label': i['label'],
@@ -424,10 +433,11 @@ def main(request):
                                               date1=date['date1'],sort_column=sort_column_in_query,
                                               date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
                                               having=having, table=table, date_field=date_field)
-                print(q)
+
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                #определим самый большой список в array_dates
             counter=0
-            for i in array_dates[0]:
+            for i in array_dates[MaxLenNum(array_dates)]:
                 stat_dict = {'label': i[dim[0]],
                              'segment': '{label}=={value}'.format(label=dim[0]
                                                                   , value=i[dim[0]])
@@ -611,8 +621,6 @@ def main(request):
         except:
             sort_column=""
 
-
-
         dimensionslist_with_segments=json.loads(request.body.decode('utf-8'))['dimensions']
         dimensionslist = []
         #Создание списка параметров без сегментов
@@ -663,23 +671,27 @@ def main(request):
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
         for i in dimensionslist:
-            dimension_counts.append('uniq({dimension}) as {dimension}'.format(dimension=i))
+            dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
         dimension_counts=','.join(dimension_counts)
 
-        # ФОрмируем массив с sum() для каждого показателя
+        # ФОрмируем массив с запросом каждого показателя в SQL
         metric_counts=[]
         for i in metrics:
             if 'goal' in i:
-                metric_counts.append("sum(Type='goal' AND goalId={N}) as goal{N}".format(N=i[4:]))
+                if '_conversion' in i:
+                    metric_counts.append(" floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2) as goal{N}_conversion".format(N=i.partition("_conversion")[0][4:]))
+                else:
+                    metric_counts.append("CAST(sum(Type='goal' AND goalId={N}),'Int') as goal{N}".format(N=i[4:]))
             if i=="nb_visits":
-                metric_counts.append('uniq(idVisit) as nb_visits')
+                metric_counts.append("CAST(uniq(idVisit),'Int') as nb_visits")
             if i in ['clicks','spend','shows']:
-                metric_counts.append('sum({metric}) as {metric}'.format(metric=i))
+                metric_counts.append("CAST(sum({metric}),'Int') as {metric}".format(metric=i))
             if i=="nb_actions":
-                metric_counts.append('sum(actions) as nb_actions')
+                metric_counts.append("CAST(sum(actions),'Int') as nb_actions")
             if i=="nb_visitors":
-                metric_counts.append('uniq(visitorId) as nb_visitors')
+                metric_counts.append("CAST(uniq(visitorId),'Int') as nb_visitors")
         metric_counts=','.join(metric_counts)
+        print(metric_counts)
 
         #Добавляем в выходной словарь параметр counts
         resp={}#Выходной словарь
