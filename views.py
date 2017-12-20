@@ -1184,10 +1184,13 @@ def diagram_stat(request):
         date2= json.loads(request.body.decode('utf-8'))['date2']
         try:
             filter = json.loads(request.body.decode('utf-8'))['filter']
+            if filter != "":
+                filt = "AND" + "(" + FilterParse(filter) + ")"
+            else:
+                filt=""
         except:
-            filt=" "
-        else:
-            filt="AND"+"("+FilterParse(filter)+")"
+            filt=""
+
         try:
             filter_metric = json.loads(request.body.decode('utf-8'))['filter_metric']
         except:
