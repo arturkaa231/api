@@ -62,7 +62,9 @@ def CHapi(request):
                 metric_counts.append("CAST(sum(Type='action'),'Int') as {metric}".format(metric=i))
                 continue
             if 'bounce_rate' in i:
-                metric_counts.append("floor((sum(visitDuration=0)/uniq(idVisit))*100,2) as {metric}".format(metric=i))
+                metric_counts.append(
+                    "if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2)) as {metric}".format(
+                        metric=i))
                 continue
             if 'bounce_count' in i:
                 metric_counts.append("CAST(sum(visitDuration=0),'Int') as {metric}".format(metric=i))
@@ -85,7 +87,7 @@ def CHapi(request):
                 continue
             if 'goal' in i:
                 if '_conversion' in i:
-                    metric_counts.append(" floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2) as goal{N}_conversion".format(N=i.partition("_conversion")[0][4:]))
+                    metric_counts.append(" if(uniq(idVisit)=0,0,floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2)) as goal{N}_conversion".format(N=i.partition("_conversion")[0][4:]))
                 else:
                     metric_counts.append("CAST(sum(Type='goal' AND goalId={N}),'Int') as goal{N}".format(N=i[4:]))
                 continue
@@ -894,7 +896,7 @@ def diagram_stat(request):
                 metric_counts.append("CAST(sum(Type='action'),'Int') as {metric}".format(metric=i))
                 continue
             if 'bounce_rate' in i:
-                metric_counts.append("floor(uniq(idVisit)/sum(visitDuration=0),2) as {metric}".format(metric=i))
+                metric_counts.append("if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2)) as {metric}".format(metric=i))
                 continue
             if 'bounce_count' in i:
                 metric_counts.append("CAST(sum(visitDuration=0),'Int') as {metric}".format(metric=i))
@@ -916,7 +918,9 @@ def diagram_stat(request):
                 metric_counts.append('floor('+calc_metr+',2)'+' as calculated_metric{N}'.format(N=int(i[17:])))
             if 'goal' in i:
                 if '_conversion' in i:
-                    metric_counts.append(" floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2) as goal{N}_conversion".format(N=i.partition("_conversion")[0][4:]))
+                    metric_counts.append(
+                        " if(uniq(idVisit)=0,0,floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2)) as goal{N}_conversion".format(
+                            N=i.partition("_conversion")[0][4:]))
                 else:
                     metric_counts.append("CAST(sum(Type='goal' AND goalId={N}),'Int') as goal{N}".format(N=i[4:]))
             if i=="nb_visits":
@@ -1032,15 +1036,16 @@ def diagram_stat(request):
         {limit}
         FORMAT JSON
         """.format(date1=date1,date2=date2,filt=filt,date_field=date_field,table=table,limit=limit,sort_column=sort_column,sort_order=sort_order,metric_counts=metric_counts,dimensions=','.join(dimensionslist))
-        print(q)
+
         stats=json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data']
-        print(stats)
 
         try:
             for stat in stats:
                 metr = {}
                 for metric_num in range(len(stat['metrics'])):
                     metr[metrics[metric_num]]=stat['metrics'][metric_num]
+
+
                 stat['metrics']=metr
                 if dimensionslist!=dimensionslist_with_segments:
                     stat['segment']='Все данные'
