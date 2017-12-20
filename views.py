@@ -1032,16 +1032,21 @@ def diagram_stat(request):
         {limit}
         FORMAT JSON
         """.format(date1=date1,date2=date2,filt=filt,date_field=date_field,table=table,limit=limit,sort_column=sort_column,sort_order=sort_order,metric_counts=metric_counts,dimensions=','.join(dimensionslist))
-
+        print(q)
         stats=json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data']
+        print(stats)
 
-        for stat in stats:
-            metr = {}
-            for metric_num in range(len(stat['metrics'])):
-                metr[metrics[metric_num]]=stat['metrics'][metric_num]
-            stat['metrics']=metr
-            if dimensionslist!=dimensionslist_with_segments:
-                stat['segment']='Все данные'
+        try:
+            for stat in stats:
+                metr = {}
+                for metric_num in range(len(stat['metrics'])):
+                    metr[metrics[metric_num]]=stat['metrics'][metric_num]
+                stat['metrics']=metr
+                if dimensionslist!=dimensionslist_with_segments:
+                    stat['segment']='Все данные'
+        except:
+            for stat in stats:
+                stat['metrics']={metrics[0]:stat['metrics']}
         for dim in dimensionslist_with_segments:
             if 'segment' in dim:
                 seg = json.loads(requests.get(
@@ -1052,7 +1057,7 @@ def diagram_stat(request):
                     'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[7:])),
                     headers=headers).content.decode('utf-8'))['name']
                 q = """
-                        SELECT {dimensions},({metric_counts}) as metrics
+                        SELECT {dimensions},[{metric_counts}] as metrics
                         FROM {table}
                         WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
                         GROUP BY {dimensions}
@@ -1072,24 +1077,24 @@ def diagram_stat(request):
                     stat['metrics'] = metr
                     stat['segment']=seg_label
                     stats.append(stat)
+        if dimensionslist!=dimensionslist_with_segments:
+            for stat_num in range(len(stats)-1,-1,-1):
+                if stats[stat_num]['segment']=='Все данные':
+                    k=0
+                    without_seg=stats[stat_num].copy()
+                    without_seg.pop('metrics')
+                    without_seg.pop('segment')
+                    without_seg=without_seg
+                    for i in stats:
+                        compare_seg = i.copy()
+                        compare_seg.pop('metrics')
+                        compare_seg.pop('segment')
 
-        for stat_num in range(len(stats)-1,-1,-1):
-            if stats[stat_num]['segment']=='Все данные':
-                k=0
-                without_seg=stats[stat_num].copy()
-                without_seg.pop('metrics')
-                without_seg.pop('segment')
-                without_seg=without_seg
-                for i in stats:
-                    compare_seg = i.copy()
-                    compare_seg.pop('metrics')
-                    compare_seg.pop('segment')
+                        if without_seg==compare_seg:
 
-                    if without_seg==compare_seg:
-
-                        k+=1
-                if k==1:
-                    stats.pop(stat_num)
+                            k+=1
+                    if k==1:
+                        stats.pop(stat_num)
 
         return stats
     def FilterParse(filt_string):
