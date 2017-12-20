@@ -52,6 +52,21 @@ def CHapi(request):
     def MetricCounts(metrics):
         metric_counts=[]
         for i in metrics:
+            if 'nb_downloads' in i:
+                metric_counts.append("CAST(sum(Type='download'),'Int') as {metric}".format(metric=i))
+                continue
+            if 'nb_conversions' in i:
+                metric_counts.append("CAST(sum(Type='goal'),'Int') as {metric}".format(metric=i))
+                continue
+            if 'nb_pageviews' in i:
+                metric_counts.append("CAST(sum(Type='action'),'Int') as {metric}".format(metric=i))
+                continue
+            if 'bounce_rate' in i:
+                metric_counts.append("floor(uniq(idVisit)/sum(visitDuration=0),2) as {metric}".format(metric=i))
+                continue
+            if 'bounce_count' in i:
+                metric_counts.append("CAST(sum(visitDuration=0),'Int') as {metric}".format(metric=i))
+                continue
             if 'calculated_metric' in i:
                 calc_metr=json.loads(requests.get(
                     'https://s.analitika.online/api/reference/calculated_metrics?code=calculated_metric{num}'.format(num=int(i[17:])),
@@ -67,19 +82,25 @@ def CHapi(request):
                 for goal in goals:
                     calc_metr=calc_metr.replace(goal,"sum(Type='goal' AND goalId={N})".format(N=goal[4:]))
                 metric_counts.append('floor('+calc_metr+',2)'+' as calculated_metric{N}'.format(N=int(i[17:])))
+                continue
             if 'goal' in i:
                 if '_conversion' in i:
                     metric_counts.append(" floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2) as goal{N}_conversion".format(N=i.partition("_conversion")[0][4:]))
                 else:
                     metric_counts.append("CAST(sum(Type='goal' AND goalId={N}),'Int') as goal{N}".format(N=i[4:]))
+                continue
             if i=="nb_visits":
                 metric_counts.append("CAST(uniq(idVisit),'Int') as nb_visits")
+                continue
             if i in ['clicks','spend','shows']:
                 metric_counts.append("CAST(sum({metric}),'Int') as {metric}".format(metric=i))
+                continue
             if i=="nb_actions":
                 metric_counts.append("CAST(sum(actions),'Int') as nb_actions")
+                continue
             if i=="nb_visitors":
                 metric_counts.append("CAST(uniq(visitorId),'Int') as nb_visitors")
+                continue
         return ','.join(metric_counts)
     def RecStats(n,i,updimensions,table,up_dim_info):
         """Рекурсивный метод для добавления вложенных структур в stats"""
@@ -771,5 +792,429 @@ def CHapi(request):
         args={}
         args.update(csrf(request))
         return render_to_response('mainAPI.html',args)
+def segment_stat(request):
+    def get_clickhouse_data(query, host, connection_timeout=1500):
+        """Метод для обращения к базе данных CH"""
+        r = requests.post(host, params={'query': query}, timeout=connection_timeout)
+        return r.text
+    def FilterParse(filt_string):
+        """Метод для перевода  global_filter в строку для sql запроса"""
+        # filt_string=filt_string.replace(',',' OR ')
+        # filt_string = filt_string.replace(';', ' AND ')
+        # print(filt_string.partition('=@'))
+        simple_operators = ['==', '!=', '>=', '<=', '>', '<']
+        like_operators = ['=@', '!@', '=^', '=$', '!^', '!&']
+        like_str = [" LIKE '%{val}%'", " NOT LIKE '%{val}%'", " LIKE '{val}%'", " LIKE '%{val}'", " NOT LIKE '{val}%'",
+                    " NOT LIKE '%{val}'"]
+        match_operators = ['=~', '!~']
+        match_str = [" match({par}?'{val}')", " NOT match({par}?'{val}')"]
+        separator_indices = []
+        for i in range(len(filt_string)):
+            if filt_string[i] == ',' or filt_string[i] == ';':
+                separator_indices.append(i)
+        separator_indices.append(len(filt_string))
+        end_filt = ""
+        for i in range(len(separator_indices)):
+            if i == 0:
+                sub_str = filt_string[0:separator_indices[i]]
+            else:
+                sub_str = filt_string[separator_indices[i - 1] + 1:separator_indices[i]]
+            for j in simple_operators:
+                if sub_str.partition(j)[2] == '':
+                    pass
+                else:
+                    sub_str = sub_str.partition(j)[0] + j + "'" + sub_str.partition(j)[2] + "'"
+                    break
+            for j in range(len(like_operators)):
+                if sub_str.partition(like_operators[j])[2] == '':
+                    pass
+                else:
+                    sub_str = sub_str.partition(like_operators[j])[0] + like_str[j].format(
+                        val=sub_str.partition(like_operators[j])[2])
+                    break
+            for j in range(len(match_operators)):
+                if sub_str.partition(match_operators[j])[2] == '':
+                    pass
+                else:
+                    sub_str = match_str[j].format(val=sub_str.partition(match_operators[j])[2],
+                                                  par=sub_str.partition(match_operators[j])[0])
+                    break
+            try:
+                end_filt = end_filt + sub_str + filt_string[separator_indices[i]]
+            except:
+                end_filt = end_filt + sub_str
+
+        end_filt = end_filt.replace(',', ' OR ')
+        end_filt = end_filt.replace(';', ' AND ')
+        end_filt = end_filt.replace('?', ',')
+        return end_filt
+    if request.method=='GET':
+        response=dict(request.GET)
+        for key in  response.keys():
+            response[key]=response[key][0]
+
+        try:
+            if response['filter']=='':
+                filter=1
+            else:
+                filter=FilterParse(response['filter'])
+        except:
+            filter=1
+        q_total="""
+        SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM CHdatabase.visits WHERE serverDate BETWEEN '{date1}' AND '{date2}' FORMAT JSON
+        """.format(date1=response['date1'],date2=response['date2'])
+        try:
+            total=json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
+        except:
+            total={'visitors':0,'visits':0}
+        q = """
+                SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM CHdatabase.visits WHERE serverDate BETWEEN '{date1}' AND '{date2}' AND {filter} FORMAT JSON
+                """.format(date1=response['date1'], date2=response['date2'],filter=filter)
+        try:
+            with_filter = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+        except:
+            with_filter = {'visitors': 0, 'visits': 0}
+        visitors={'total_sum':total['visitors'],'sum':with_filter['visitors']}
+        visits={'total_sum':total['visits'],'sum':with_filter['visits']}
+        response['segment_stat']={'visitors':visitors,'visits':visits}
+        print(response)
+        return JsonResponse(response, safe=False, )
+@csrf_exempt
+def diagram_stat(request):
+    def MetricCounts(metrics):
+        metric_counts=[]
+        for i in metrics:
+            if 'calculated_metric' in i:
+                calc_metr=json.loads(requests.get(
+                    'https://s.analitika.online/api/reference/calculated_metrics?code=calculated_metric{num}'.format(num=int(i[17:])),
+                    headers=headers).content.decode('utf-8'))['results'][0]['definition']
+
+                calc_metr=calc_metr.replace('shows','sum(shows}').replace('spend','sum(spend)').\
+                    replace('clicks','sum(clicks)').replace('nb_visits','uniq(idVisit)').replace('nb_actions','sum(actions)').\
+                    replace('nb_visitors','uniq(visitorId)')
+                goal_conversions = re.findall(r'goal\d{1,3}_conversion', calc_metr)
+                for goal_conversion in goal_conversions:
+                    calc_metr = calc_metr.replace(goal_conversion, "floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2)".format(N=goal_conversion.partition("_conversion")[0][4:]))
+                goals = re.findall(r'goal\d{1,3}_{0}', calc_metr)
+                for goal in goals:
+                    calc_metr=calc_metr.replace(goal,"sum(Type='goal' AND goalId={N})".format(N=goal[4:]))
+                metric_counts.append('floor('+calc_metr+',2)'+' as calculated_metric{N}'.format(N=int(i[17:])))
+            if 'goal' in i:
+                if '_conversion' in i:
+                    metric_counts.append(" floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2) as goal{N}_conversion".format(N=i.partition("_conversion")[0][4:]))
+                else:
+                    metric_counts.append("CAST(sum(Type='goal' AND goalId={N}),'Int') as goal{N}".format(N=i[4:]))
+            if i=="nb_visits":
+                metric_counts.append("CAST(uniq(idVisit),'Int') as nb_visits")
+            if i in ['clicks','spend','shows']:
+                metric_counts.append("CAST(sum({metric}),'Int') as {metric}".format(metric=i))
+            if i=="nb_actions":
+                metric_counts.append("CAST(sum(actions),'Int') as nb_actions")
+            if i=="nb_visitors":
+                metric_counts.append("CAST(uniq(visitorId),'Int') as nb_visitors")
+        return ','.join(metric_counts)
+    def get_clickhouse_data(query,host,connection_timeout=1500):
+        """Метод для обращения к базе данных CH"""
+        r=requests.post(host,params={'query':query},timeout=connection_timeout)
+        return r.text
+    def AddCounts(date1,date2,dimension_counts,filt,sort_order,table):
+        """Добавление ключа Counts в ответ"""
+
+        q = ''' SELECT {dimension_counts}
+                     FROM {table}
+                     WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                     ORDER BY NULL {sort_order}
+                     FORMAT JSON
+                    '''.format(date1=date1, date2=date2, dimension_counts=dimension_counts, filt=filt,
+                               sort_order=sort_order,table=table,date_field=date_field)
+        b = {}
+        try:
+            # Объеденяем словарь с датами со словарем  вернувшихся значений каждого из запрошенных параметров
+            a = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+            #изменяем значения показателей на целочисленный тип
+            for key in a.keys():
+                b[key[1:]]=a[key]
+        except:
+            b=dict.fromkeys(dimensionslist,0)
+        return b
+    def AddMetricSums(date1,date2,metric_counts,filt,metrics,sort_order,table):
+        """Добавление ключа metric_sums в ответ"""
+        dates = []
+
+        # Запрос на получение сумм показателей без фильтра
+        q_total = ''' SELECT {metric_counts}
+                    FROM {table}
+                    WHERE {date_field} BETWEEN '{date1}' AND '{date2}'
+                    ORDER BY NULL {sort_order}
+                    FORMAT JSON
+                   '''.format(date1=date1, date2=date2, metric_counts=metric_counts,
+                              sort_order=sort_order,table=table,date_field=date_field)
+
+        # С фильтром
+        q = ''' SELECT {metric_counts}
+                                FROM {table}
+                                WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                                ORDER BY NULL {sort_order}
+                                FORMAT JSON
+                               '''.format(date1=date1, date2=date2, metric_counts=metric_counts,
+                                          filt=filt, sort_order=sort_order,table=table,date_field=date_field)
+            #Проверка на существование записей, если их нет, возвращаем нули
+        try:
+            a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
+            b = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+                # Создаем словарь, ключи которого это элементы списка metrics
+            metric_dict = dict.fromkeys(metrics)
+                # Заполняем этот словарь полученными из базы данными
+            for (i, j, k) in zip(metric_dict, a, b):
+                metric_dict[i] = {"total_sum": a[j], "sum": b[k]}
+        except:
+            metric_dict=dict.fromkeys(metrics)
+            for i in metric_dict:
+                metric_dict[i]={"total_sum":0,"sum":0}
+            # Добавляем в него даты
+        metric_dict.update({'date1':date1,'date2':date2})
+        dates.append(metric_dict)
+        return dates
+    def AddMetricSumsWithFilt(period,metric_counts,filt,metrics,sort_order,table):
+        ar_d=[]
+        for date in period:
+            t = '''SELECT {metric_counts} FROM {table}
+                    WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                    FORMAT JSON
+                    '''.format(
+                metric_counts=metric_counts,
+                date1=date['date1'],
+                date2=date['date2'], filt=filt,
+                table=table, date_field=date_field)
+
+            ar_d.append(json.loads(get_clickhouse_data(t, 'http://85.143.172.199:8123'))['data'])
+        counter=0
+        for i in ar_d[0]:
+            try:
+                st_d = {'label': 'Все данные',
+                            'segment': filter.replace(',',' OR ').replace(';',' AND ') }
+            except:
+                st_d = {'label': 'Все данные',
+                             'segment': ''}
+            dates = []
+            for m in range(len(ar_d)):
+                metrics_dict = dict.fromkeys(metrics)
+                for j in metrics_dict:
+                    metrics_dict[j] = ar_d[m][counter][j]
+                dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
+            st_d['dates'] = dates
+            counter+=1
+        return st_d
+    def AddStats2(dimensionslist, metric_counts, filt, limit, having, date1,date2, metrics, table):
+        """Добавление ключа stats в ответ"""
+        #Определяем, есть ли вначале dimensions группа сегментов
+        q="""
+        SELECT {dimensions},({metric_counts}) as metrics
+        FROM {table}
+        WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+        GROUP BY {dimensions}
+        ORDER BY {sort_column} {sort_order}
+        {limit}
+        FORMAT JSON
+        """.format(date1=date1,date2=date2,filt=filt,date_field=date_field,table=table,limit=limit,sort_column=sort_column,sort_order=sort_order,metric_counts=metric_counts,dimensions=','.join(dimensionslist))
+
+        stats=json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data']
+
+        for stat in stats:
+            metr = {}
+            for metric_num in range(len(stat['metrics'])):
+                metr[metrics[metric_num]]=stat['metrics'][metric_num]
+            stat['metrics']=metr
+            if dimensionslist!=dimensionslist_with_segments:
+                stat['segment']='Все данные'
+        for dim in dimensionslist_with_segments:
+            if 'segment' in dim:
+                seg = json.loads(requests.get(
+                    'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[7:])),
+                    headers=headers).content.decode('utf-8'))['real_definition']
+                seg_filt = seg.partition("==")[0] + "=='" + seg.partition("==")[2] + "'"
+                seg_label = json.loads(requests.get(
+                    'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[7:])),
+                    headers=headers).content.decode('utf-8'))['name']
+                q = """
+                        SELECT {dimensions},({metric_counts}) as metrics
+                        FROM {table}
+                        WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
+                        GROUP BY {dimensions}
+                        ORDER BY {sort_column} {sort_order}
+                        {limit}
+                        FORMAT JSON
+                        """.format(date1=date1, date2=date2, filt=filt, date_field=date_field, table=table, limit=limit,
+                                   sort_column=sort_column, sort_order=sort_order, metric_counts=metric_counts,
+                                   dimensions=','.join(dimensionslist),seg_filt=seg_filt)
+
+                stat_with_segment = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data']
+                print(q)
+                for stat in stat_with_segment:
+                    metr = {}
+                    for metric_num in range(len(stat['metrics'])):
+                        metr[metrics[metric_num]] = stat['metrics'][metric_num]
+                    stat['metrics'] = metr
+                    stat['segment']=seg_label
+                    stats.append(stat)
+
+        for stat_num in range(len(stats)-1,-1,-1):
+            if stats[stat_num]['segment']=='Все данные':
+                k=0
+                without_seg=stats[stat_num].copy()
+                without_seg.pop('metrics')
+                without_seg.pop('segment')
+                without_seg=without_seg
+                for i in stats:
+                    compare_seg = i.copy()
+                    compare_seg.pop('metrics')
+                    compare_seg.pop('segment')
+
+                    if without_seg==compare_seg:
+
+                        k+=1
+                if k==1:
+                    stats.pop(stat_num)
+
+        return stats
+    def FilterParse(filt_string):
+        """Метод для перевода  global_filter в строку для sql запроса"""
+        #filt_string=filt_string.replace(',',' OR ')
+        #filt_string = filt_string.replace(';', ' AND ')
+        #print(filt_string.partition('=@'))
+        simple_operators=['==','!=','>=','<=','>','<']
+        like_operators=['=@','!@','=^','=$','!^','!&']
+        like_str=[" LIKE '%{val}%'"," NOT LIKE '%{val}%'"," LIKE '{val}%'"," LIKE '%{val}'"," NOT LIKE '{val}%'"," NOT LIKE '%{val}'"]
+        match_operators=['=~','!~']
+        match_str=[" match({par}?'{val}')"," NOT match({par}?'{val}')"]
+        separator_indices=[]
+        for i in range(len(filt_string)):
+            if filt_string[i]==',' or filt_string[i]==';':
+                separator_indices.append(i)
+        separator_indices.append(len(filt_string))
+        end_filt=""
+        for i in range(len(separator_indices)):
+            if i==0:
+                sub_str = filt_string[0:separator_indices[i]]
+            else:
+                sub_str=filt_string[separator_indices[i-1]+1:separator_indices[i]]
+            for j in simple_operators:
+                if sub_str.partition(j)[2]=='':
+                    pass
+                else:
+                    sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
+                    break
+            for j in range(len(like_operators)):
+                if sub_str.partition(like_operators[j])[2]=='':
+                    pass
+                else:
+                    sub_str = sub_str.partition(like_operators[j])[0] +like_str[j].format(val=sub_str.partition(like_operators[j])[2])
+                    break
+            for j in range(len(match_operators)):
+                if sub_str.partition(match_operators[j])[2]=='':
+                    pass
+                else:
+                    sub_str = match_str[j].format(val=sub_str.partition(match_operators[j])[2],par=sub_str.partition(match_operators[j])[0])
+                    break
+            try:
+                end_filt=end_filt+sub_str+filt_string[separator_indices[i]]
+            except:
+                end_filt = end_filt + sub_str
+
+        end_filt=end_filt.replace(',',' OR ')
+        end_filt=end_filt.replace(';',' AND ')
+        end_filt = end_filt.replace('?', ',')
+        return end_filt
+    if request.method=='POST':
+        #Заголовки для запроса сегментов
+        headers = {
+            'Authorization': 'JWT eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxMSwiZW1haWwiOiIiLCJleHAiOjE0NzU3NjQwODAsInVzZXJuYW1lIjoiYXBpIn0.2Pj7lqRxuB6aBd4qgeMCaE_O5qIkm4QDmepcTwioqgA',
+            'Content-Type': 'application/json'}
+        # Парсинг json
+        try:
+            sort_order=json.loads(request.body.decode('utf-8'))['sort_order']
+        except:
+            sort_order=""
+        #сортировка по переданному показателю
+
+
+        dimensionslist_with_segments=json.loads(request.body.decode('utf-8'))['dimensions']
+        try:
+            sort_column = json.loads(request.body.decode('utf-8'))['sort_column']
+        except:
+            sort_column=dimensionslist_with_segments[0]
+        dimensionslist = []
+        #Создание списка параметров без сегментов
+        for d in dimensionslist_with_segments:
+            if 'segment' not in d and type(d)!=list:
+                dimensionslist.append(d)
+        metrics = json.loads(request.body.decode('utf-8'))['metrics']
+        #если в запросе не указан сдвиг, зададим его равным нулю
+        try:
+            offset = json.loads(request.body.decode('utf-8'))['offset']
+        except:
+            offset='0'
+        #если в запросе не указан лимит, зададим его путой строкой, если указан, составим строку LIMIT...
+        try:
+            limit = 'LIMIT '+str(offset)+','+str(json.loads(request.body.decode('utf-8'))['limit'])
+        except:
+            limit=''
+
+        date1 = json.loads(request.body.decode('utf-8'))['date1']
+        date2= json.loads(request.body.decode('utf-8'))['date2']
+        try:
+            filter = json.loads(request.body.decode('utf-8'))['filter']
+        except:
+            filt=" "
+        else:
+            filt="AND"+"("+FilterParse(filter)+")"
+        try:
+            filter_metric = json.loads(request.body.decode('utf-8'))['filter_metric']
+        except:
+            having=" "
+        else:
+            having = 'HAVING'+' '+FilterParse(filter_metric)
+        try:
+            search_pattern=json.loads(request.body.decode('utf-8'))['search_pattern']
+
+        except:
+            search_pattern=""
+        #если список dimensionslist пуст, значит были переданы только сегменты
+        try:
+            #Проверка на пренадленость параметров к таблице.
+            if dimensionslist[0] in ['adclient','campaign','stat_date','banner',
+                                     'keyword','shows','clicks','spend','utm_source',
+                                     'utm_medium','utm_campaign','utm_term','utm_content']:
+                table = 'CHdatabase.adstat'
+                date_field='stat_date'
+            else:
+                table = 'CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit'
+                date_field = 'serverDate'
+        except:
+            table = 'CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
+            date_field = 'serverDate'
+
+        #Формируем массив с count() для каждого параметра
+        dimension_counts=[]
+        for i in dimensionslist:
+            dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
+        dimension_counts=','.join(dimension_counts)
+        # ФОрмируем массив с запросом каждого показателя в SQL
+        metric_counts=MetricCounts(metrics)
+        #Добавляем в выходной словарь параметр counts
+        resp={}#Выходной словарь
+        resp['counts'] = {}
+        resp['counts']=AddCounts(date1,date2,dimension_counts,filt,sort_order,table)
+
+        # Добавляем в выходной словарь параметр metric_sums
+        resp['metric_sums']={}
+        resp['metric_sums']['dates'] = AddMetricSums(date1,date2,metric_counts,filt,metrics,sort_order,table)
+        stats=AddStats2(dimensionslist,metric_counts,filt,limit,having,date1,date2,metrics,table)
+        # Добавляем stats
+        resp['stats']=stats
+        pprint.pprint(resp)
+        response=JsonResponse(resp,safe=False,)
+        response['Access-Control-Allow-Origin']='*'
+        return response
 
 
