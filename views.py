@@ -62,7 +62,7 @@ def CHapi(request):
                 metric_counts.append("CAST(sum(Type='action'),'Int') as {metric}".format(metric=i))
                 continue
             if 'bounce_rate' in i:
-                metric_counts.append("floor(uniq(idVisit)/sum(visitDuration=0),2) as {metric}".format(metric=i))
+                metric_counts.append("floor((sum(visitDuration=0)/uniq(idVisit))*100,2) as {metric}".format(metric=i))
                 continue
             if 'bounce_count' in i:
                 metric_counts.append("CAST(sum(visitDuration=0),'Int') as {metric}".format(metric=i))
