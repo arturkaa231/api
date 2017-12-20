@@ -884,6 +884,21 @@ def diagram_stat(request):
     def MetricCounts(metrics):
         metric_counts=[]
         for i in metrics:
+            if 'nb_downloads' in i:
+                metric_counts.append("CAST(sum(Type='download'),'Int') as {metric}".format(metric=i))
+                continue
+            if 'nb_conversions' in i:
+                metric_counts.append("CAST(sum(Type='goal'),'Int') as {metric}".format(metric=i))
+                continue
+            if 'nb_pageviews' in i:
+                metric_counts.append("CAST(sum(Type='action'),'Int') as {metric}".format(metric=i))
+                continue
+            if 'bounce_rate' in i:
+                metric_counts.append("floor(uniq(idVisit)/sum(visitDuration=0),2) as {metric}".format(metric=i))
+                continue
+            if 'bounce_count' in i:
+                metric_counts.append("CAST(sum(visitDuration=0),'Int') as {metric}".format(metric=i))
+                continue
             if 'calculated_metric' in i:
                 calc_metr=json.loads(requests.get(
                     'https://s.analitika.online/api/reference/calculated_metrics?code=calculated_metric{num}'.format(num=int(i[17:])),

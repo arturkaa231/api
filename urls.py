@@ -1,5 +1,5 @@
 from django.conf.urls import url
-from CH import views
+from api import views
 
 urlpatterns=[
 	url(r'^stat/segment_stat/*$',views.segment_stat, name='segment_stat'),
