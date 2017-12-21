@@ -34,7 +34,7 @@ def MetricCounts(metrics,headers):
                 "if(uniq(idVisit)=0,0,floor(sum(actions)/uniq(idVisit),2)) as {metric}".format(metric=i))
             continue
         if 'nb_pageviews_per_visit' in i:
-            metric_counts.append("floor(avg(sum(Type='action')/uniq(idVisit)),2) as {metric}".format(metric=i))
+            metric_counts.append("floor(sum(Type='action')/uniq(idVisit),2) as {metric}".format(metric=i))
             continue
         if 'ctr' in i:
             metric_counts.append("if(sum(shows)=0,0,floor((sum(clicks)/sum(shows))*100,2)) as {metric}".format(metric=i))
