@@ -13,12 +13,28 @@ import string
 def MetricCounts(metrics,headers):
     metric_counts = []
     for i in metrics:
+        if 'nb_return_visitors' in i:
+            metric_counts.append(
+                "sum(visitorType='returning') as {metric}".format(metric=i))
+            continue
+        if 'nb_new_visits_per_all_visits' in i:
+            metric_counts.append(
+                "if(uniq(idVisit)=0,0,floor(sum(visitorType='new')*100/uniq(idVisit),2)) as {metric}".format(metric=i))
+            continue
+        if 'nb_new_visits' in i:
+            metric_counts.append(
+                "sum(visitorType='new') as {metric}".format(metric=i))
+            continue
+        if 'nb_new_visitors' in i:
+            metric_counts.append(
+                "sum(visitorType='new') as {metric}".format(metric=i))
+            continue
         if 'nb_actions_per_visit' in i:
             metric_counts.append(
                 "if(uniq(idVisit)=0,0,floor(sum(actions)/uniq(idVisit),2)) as {metric}".format(metric=i))
             continue
         if 'nb_pageviews_per_visit' in i:
-            metric_counts.append("if(uniq(idVisit)=0,0,floor(sum(Type='action')/uniq(idVisit),2)) as {metric}".format(metric=i))
+            metric_counts.append("floor(avg(sum(Type='action')/uniq(idVisit)),2) as {metric}".format(metric=i))
             continue
         if 'ctr' in i:
             metric_counts.append("if(sum(shows)=0,0,floor((sum(clicks)/sum(shows))*100,2)) as {metric}".format(metric=i))
@@ -537,7 +553,7 @@ def CHapi(request):
                                               date1=date['date1'],sort_column=sort_column_in_query,
                                               date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
                                               having=having, table=table, date_field=date_field)
-
+                print(q)
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dim[0],having,table,date_filt,1)
 
