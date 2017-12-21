@@ -8,6 +8,75 @@ from django.views.decorators.csrf import csrf_exempt
 import pprint
 import re
 import string
+
+
+def MetricCounts(metrics,headers):
+    metric_counts = []
+    for i in metrics:
+        if 'nb_actions_per_visit' in i:
+            metric_counts.append(
+                "if(uniq(idVisit)=0,0,floor(sum(actions)/uniq(idVisit),2)) as {metric}".format(metric=i))
+            continue
+        if 'nb_pageviews_per_visit' in i:
+            metric_counts.append("if(uniq(idVisit)=0,0,floor(sum(Type='action')/uniq(idVisit),2)) as {metric}".format(metric=i))
+            continue
+        if 'ctr' in i:
+            metric_counts.append("if(sum(shows)=0,0,floor((sum(clicks)/sum(shows))*100,2)) as {metric}".format(metric=i))
+            continue
+        if 'avg_time_generation' in i:
+            metric_counts.append("floor(avg(generationTimeMilliseconds)/1000,2) as {metric}".format(metric=i))
+            continue
+        if 'nb_downloads' in i:
+            metric_counts.append("CAST(sum(Type='download'),'Int') as {metric}".format(metric=i))
+            continue
+        if 'nb_conversions' in i:
+            metric_counts.append("CAST(sum(Type='goal'),'Int') as {metric}".format(metric=i))
+            continue
+        if 'nb_pageviews' in i:
+            metric_counts.append("CAST(sum(Type='action'),'Int') as {metric}".format(metric=i))
+            continue
+        if 'bounce_rate' in i:
+            metric_counts.append(
+                "if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2)) as {metric}".format(metric=i))
+            continue
+        if 'bounce_count' in i:
+            metric_counts.append("CAST(sum(visitDuration=0),'Int') as {metric}".format(metric=i))
+            continue
+        if 'calculated_metric' in i:
+            calc_metr = json.loads(requests.get(
+                'https://s.analitika.online/api/reference/calculated_metrics?code=calculated_metric{num}'.format(
+                    num=int(i[17:])),
+                headers=headers).content.decode('utf-8'))['results'][0]['definition']
+
+            calc_metr = calc_metr.replace('shows', 'sum(shows}').replace('spend', 'sum(spend)'). \
+                replace('clicks', 'sum(clicks)').replace('nb_visits', 'uniq(idVisit)').replace('nb_actions',
+                                                                                               'sum(actions)'). \
+                replace('nb_visitors', 'uniq(visitorId)')
+            goal_conversions = re.findall(r'goal\d{1,3}_conversion', calc_metr)
+            for goal_conversion in goal_conversions:
+                calc_metr = calc_metr.replace(goal_conversion,
+                                              "floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2)".format(
+                                                  N=goal_conversion.partition("_conversion")[0][4:]))
+            goals = re.findall(r'goal\d{1,3}_{0}', calc_metr)
+            for goal in goals:
+                calc_metr = calc_metr.replace(goal, "sum(Type='goal' AND goalId={N})".format(N=goal[4:]))
+            metric_counts.append('floor(' + calc_metr + ',2)' + ' as calculated_metric{N}'.format(N=int(i[17:])))
+        if 'goal' in i:
+            if '_conversion' in i:
+                metric_counts.append(
+                    " if(uniq(idVisit)=0,0,floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2)) as goal{N}_conversion".format(
+                        N=i.partition("_conversion")[0][4:]))
+            else:
+                metric_counts.append("CAST(sum(Type='goal' AND goalId={N}),'Int') as goal{N}".format(N=i[4:]))
+        if i == "nb_visits":
+            metric_counts.append("CAST(uniq(idVisit),'Int') as nb_visits")
+        if i in ['clicks', 'spend', 'shows']:
+            metric_counts.append("CAST(sum({metric}),'Int') as {metric}".format(metric=i))
+        if i == "nb_actions":
+            metric_counts.append("CAST(sum(actions),'Int') as nb_actions")
+        if i == "nb_visitors":
+            metric_counts.append("CAST(uniq(visitorId),'Int') as nb_visitors")
+    return ','.join(metric_counts)
 @csrf_exempt
 def CHapi(request):
     def datesdicts(array_dates, dim,having,table,date_filt,updm):
@@ -49,61 +118,6 @@ def CHapi(request):
             if len(array_dates[array_num]) > len(array_dates[max_len]):
                 max_len = array_num
         return(max_len)
-    def MetricCounts(metrics):
-        metric_counts=[]
-        for i in metrics:
-            if 'nb_downloads' in i:
-                metric_counts.append("CAST(sum(Type='download'),'Int') as {metric}".format(metric=i))
-                continue
-            if 'nb_conversions' in i:
-                metric_counts.append("CAST(sum(Type='goal'),'Int') as {metric}".format(metric=i))
-                continue
-            if 'nb_pageviews' in i:
-                metric_counts.append("CAST(sum(Type='action'),'Int') as {metric}".format(metric=i))
-                continue
-            if 'bounce_rate' in i:
-                metric_counts.append(
-                    "if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2)) as {metric}".format(
-                        metric=i))
-                continue
-            if 'bounce_count' in i:
-                metric_counts.append("CAST(sum(visitDuration=0),'Int') as {metric}".format(metric=i))
-                continue
-            if 'calculated_metric' in i:
-                calc_metr=json.loads(requests.get(
-                    'https://s.analitika.online/api/reference/calculated_metrics?code=calculated_metric{num}'.format(num=int(i[17:])),
-                    headers=headers).content.decode('utf-8'))['results'][0]['definition']
-
-                calc_metr=calc_metr.replace('shows','sum(shows}').replace('spend','sum(spend)').\
-                    replace('clicks','sum(clicks)').replace('nb_visits','uniq(idVisit)').replace('nb_actions','sum(actions)').\
-                    replace('nb_visitors','uniq(visitorId)')
-                goal_conversions = re.findall(r'goal\d{1,3}_conversion', calc_metr)
-                for goal_conversion in goal_conversions:
-                    calc_metr = calc_metr.replace(goal_conversion, "floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2)".format(N=goal_conversion.partition("_conversion")[0][4:]))
-                goals = re.findall(r'goal\d{1,3}_{0}', calc_metr)
-                for goal in goals:
-                    calc_metr=calc_metr.replace(goal,"sum(Type='goal' AND goalId={N})".format(N=goal[4:]))
-                metric_counts.append('floor('+calc_metr+',2)'+' as calculated_metric{N}'.format(N=int(i[17:])))
-                continue
-            if 'goal' in i:
-                if '_conversion' in i:
-                    metric_counts.append(" if(uniq(idVisit)=0,0,floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2)) as goal{N}_conversion".format(N=i.partition("_conversion")[0][4:]))
-                else:
-                    metric_counts.append("CAST(sum(Type='goal' AND goalId={N}),'Int') as goal{N}".format(N=i[4:]))
-                continue
-            if i=="nb_visits":
-                metric_counts.append("CAST(uniq(idVisit),'Int') as nb_visits")
-                continue
-            if i in ['clicks','spend','shows']:
-                metric_counts.append("CAST(sum({metric}),'Int') as {metric}".format(metric=i))
-                continue
-            if i=="nb_actions":
-                metric_counts.append("CAST(sum(actions),'Int') as nb_actions")
-                continue
-            if i=="nb_visitors":
-                metric_counts.append("CAST(uniq(visitorId),'Int') as nb_visitors")
-                continue
-        return ','.join(metric_counts)
     def RecStats(n,i,updimensions,table,up_dim_info):
         """Рекурсивный метод для добавления вложенных структур в stats"""
         #Добавляем фильтры
@@ -480,8 +494,9 @@ def CHapi(request):
 
             counter=0
             for i in array_dates[0]:
-                if search_pattern.lower() not in i['label'].lower():
+                if search_pattern.lower() not in str(i['label']).lower():
                     continue
+
                 stat_dict = {'label': i['label'],
                                 'segment': i['segment'],}
 
@@ -528,8 +543,10 @@ def CHapi(request):
 
                 #определим самый большой список в array_dates
             for i in array_dates[MaxLenNum(array_dates)]:
-                if search_pattern.lower() not in i[dim[0]].lower():
+                if search_pattern.lower() not in str(i[dim[0]]).lower():
                     continue
+
+
                 stat_dict = {'label': i[dim[0]],
                              'segment': '{label}=={value}'.format(label=dim[0]
                                                                   , value=i[dim[0]])
@@ -590,8 +607,10 @@ def CHapi(request):
                 counter+=1
             counter = 0
             for i in array_dates[0]:
-                if search_pattern.lower() not in i['label'].lower():
+
+                if search_pattern.lower() not in str(i['label']).lower():
                     continue
+
                 stat_dict = {'label': i['label'],
                                 'segment': i['segment'],}
                 dates = []
@@ -766,7 +785,7 @@ def CHapi(request):
             dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
         dimension_counts=','.join(dimension_counts)
         # ФОрмируем массив с запросом каждого показателя в SQL
-        metric_counts=MetricCounts(metrics)
+        metric_counts=MetricCounts(metrics,headers)
 
         #Фильтр по всем датам
         date_filt = []
@@ -881,57 +900,10 @@ def segment_stat(request):
         response['segment_stat']={'visitors':visitors,'visits':visits}
         print(response)
         return JsonResponse(response, safe=False, )
+
 @csrf_exempt
 def diagram_stat(request):
-    def MetricCounts(metrics):
-        metric_counts=[]
-        for i in metrics:
-            if 'nb_downloads' in i:
-                metric_counts.append("CAST(sum(Type='download'),'Int') as {metric}".format(metric=i))
-                continue
-            if 'nb_conversions' in i:
-                metric_counts.append("CAST(sum(Type='goal'),'Int') as {metric}".format(metric=i))
-                continue
-            if 'nb_pageviews' in i:
-                metric_counts.append("CAST(sum(Type='action'),'Int') as {metric}".format(metric=i))
-                continue
-            if 'bounce_rate' in i:
-                metric_counts.append("if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2)) as {metric}".format(metric=i))
-                continue
-            if 'bounce_count' in i:
-                metric_counts.append("CAST(sum(visitDuration=0),'Int') as {metric}".format(metric=i))
-                continue
-            if 'calculated_metric' in i:
-                calc_metr=json.loads(requests.get(
-                    'https://s.analitika.online/api/reference/calculated_metrics?code=calculated_metric{num}'.format(num=int(i[17:])),
-                    headers=headers).content.decode('utf-8'))['results'][0]['definition']
 
-                calc_metr=calc_metr.replace('shows','sum(shows}').replace('spend','sum(spend)').\
-                    replace('clicks','sum(clicks)').replace('nb_visits','uniq(idVisit)').replace('nb_actions','sum(actions)').\
-                    replace('nb_visitors','uniq(visitorId)')
-                goal_conversions = re.findall(r'goal\d{1,3}_conversion', calc_metr)
-                for goal_conversion in goal_conversions:
-                    calc_metr = calc_metr.replace(goal_conversion, "floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2)".format(N=goal_conversion.partition("_conversion")[0][4:]))
-                goals = re.findall(r'goal\d{1,3}_{0}', calc_metr)
-                for goal in goals:
-                    calc_metr=calc_metr.replace(goal,"sum(Type='goal' AND goalId={N})".format(N=goal[4:]))
-                metric_counts.append('floor('+calc_metr+',2)'+' as calculated_metric{N}'.format(N=int(i[17:])))
-            if 'goal' in i:
-                if '_conversion' in i:
-                    metric_counts.append(
-                        " if(uniq(idVisit)=0,0,floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2)) as goal{N}_conversion".format(
-                            N=i.partition("_conversion")[0][4:]))
-                else:
-                    metric_counts.append("CAST(sum(Type='goal' AND goalId={N}),'Int') as goal{N}".format(N=i[4:]))
-            if i=="nb_visits":
-                metric_counts.append("CAST(uniq(idVisit),'Int') as nb_visits")
-            if i in ['clicks','spend','shows']:
-                metric_counts.append("CAST(sum({metric}),'Int') as {metric}".format(metric=i))
-            if i=="nb_actions":
-                metric_counts.append("CAST(sum(actions),'Int') as nb_actions")
-            if i=="nb_visitors":
-                metric_counts.append("CAST(uniq(visitorId),'Int') as nb_visitors")
-        return ','.join(metric_counts)
     def get_clickhouse_data(query,host,connection_timeout=1500):
         """Метод для обращения к базе данных CH"""
         r=requests.post(host,params={'query':query},timeout=connection_timeout)
@@ -1038,6 +1010,7 @@ def diagram_stat(request):
         """.format(date1=date1,date2=date2,filt=filt,date_field=date_field,table=table,limit=limit,sort_column=sort_column,sort_order=sort_order,metric_counts=metric_counts,dimensions=','.join(dimensionslist))
 
         stats=json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data']
+        #Если показатеь один, обрабатываем ошибку
 
         try:
             for stat in stats:
@@ -1094,9 +1067,7 @@ def diagram_stat(request):
                         compare_seg = i.copy()
                         compare_seg.pop('metrics')
                         compare_seg.pop('segment')
-
                         if without_seg==compare_seg:
-
                             k+=1
                     if k==1:
                         stats.pop(stat_num)
@@ -1228,7 +1199,7 @@ def diagram_stat(request):
             dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
         dimension_counts=','.join(dimension_counts)
         # ФОрмируем массив с запросом каждого показателя в SQL
-        metric_counts=MetricCounts(metrics)
+        metric_counts=MetricCounts(metrics,headers)
         #Добавляем в выходной словарь параметр counts
         resp={}#Выходной словарь
         resp['counts'] = {}
