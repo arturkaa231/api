@@ -15,19 +15,20 @@ def MetricCounts(metrics,headers):
     for i in metrics:
         if 'nb_return_visitors' in i:
             metric_counts.append(
-                "sum(visitorType='returning') as {metric}".format(metric=i))
+                "CAST(sum(visitorType='returning'),'Int') as {metric}".format(metric=i))
             continue
         if 'nb_new_visits_per_all_visits' in i:
             metric_counts.append(
                 "if(uniq(idVisit)=0,0,floor(sum(visitorType='new')*100/uniq(idVisit),2)) as {metric}".format(metric=i))
             continue
+        #? как реализовтаь правильно
         if 'nb_new_visits' in i:
             metric_counts.append(
-                "sum(visitorType='new') as {metric}".format(metric=i))
+                "CAST(sum(visitorType='new'),'Int') as {metric}".format(metric=i))
             continue
         if 'nb_new_visitors' in i:
             metric_counts.append(
-                "sum(visitorType='new') as {metric}".format(metric=i))
+                "CAST(sum(visitorType='new'),'Int') as {metric}".format(metric=i))
             continue
         if 'nb_actions_per_visit' in i:
             metric_counts.append(
