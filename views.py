@@ -10,25 +10,30 @@ import re
 import string
 
 
-def MetricCounts(metrics,headers):
+def MetricCounts(metrics, headers, having, group_by):
     metric_counts = []
     for i in metrics:
         if 'nb_return_visitors' in i:
-            metric_counts.append(
-                "CAST(sum(visitorType='returning'),'Int') as {metric}".format(metric=i))
             continue
         if 'nb_new_visits_per_all_visits' in i:
             metric_counts.append(
-                "if(uniq(idVisit)=0,0,floor(sum(visitorType='new')*100/uniq(idVisit),2)) as {metric}".format(metric=i))
+                "if(uniq(idVisit)=0,0,floor(sum(visitorType='new')*100/uniq(idVisit),2)) as {metric}".format(
+                    metric=i))
             continue
-        #? как реализовтаь правильно
+        # ? как реализовтаь правильно
         if 'nb_new_visits' in i:
             metric_counts.append(
-                "CAST(sum(visitorType='new'),'Int') as {metric}".format(metric=i))
+                "caseWithoutExpression(visitorType='new',uniq(idVisit),visitorType='returning',0,2) as {metric}".format(
+                    metric=i))
+
+            group_by = group_by + ',visitorType'
             continue
         if 'nb_new_visitors' in i:
             metric_counts.append(
-                "CAST(sum(visitorType='new'),'Int') as {metric}".format(metric=i))
+                "caseWithoutExpression(visitorType='new',uniq(visitorId),visitorType='returning',0,2) as {metric}".format(
+                    metric=i))
+
+            group_by = group_by + ',visitorType'
             continue
         if 'nb_actions_per_visit' in i:
             metric_counts.append(
@@ -38,7 +43,8 @@ def MetricCounts(metrics,headers):
             metric_counts.append("floor(sum(Type='action')/uniq(idVisit),2) as {metric}".format(metric=i))
             continue
         if 'ctr' in i:
-            metric_counts.append("if(sum(shows)=0,0,floor((sum(clicks)/sum(shows))*100,2)) as {metric}".format(metric=i))
+            metric_counts.append(
+                "if(sum(shows)=0,0,floor((sum(clicks)/sum(shows))*100,2)) as {metric}".format(metric=i))
             continue
         if 'avg_time_generation' in i:
             metric_counts.append("floor(avg(generationTimeMilliseconds)/1000,2) as {metric}".format(metric=i))
@@ -54,7 +60,8 @@ def MetricCounts(metrics,headers):
             continue
         if 'bounce_rate' in i:
             metric_counts.append(
-                "if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2)) as {metric}".format(metric=i))
+                "if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2)) as {metric}".format(
+                    metric=i))
             continue
         if 'bounce_count' in i:
             metric_counts.append("CAST(sum(visitDuration=0),'Int') as {metric}".format(metric=i))
@@ -93,20 +100,21 @@ def MetricCounts(metrics,headers):
             metric_counts.append("CAST(sum(actions),'Int') as nb_actions")
         if i == "nb_visitors":
             metric_counts.append("CAST(uniq(visitorId),'Int') as nb_visitors")
-    return ','.join(metric_counts)
+    return having, group_by, ','.join(metric_counts)
 @csrf_exempt
 def CHapi(request):
-    def datesdicts(array_dates, dim,having,table,date_filt,updm):
+
+    def datesdicts(array_dates, dim,having,table,date_filt,updm,group_by):
         q_all = '''SELECT {dimension} FROM (SELECT {dimension},{metric_counts} FROM {table}
                                            WHERE 1 {filt} AND {date_filt} AND {updm}
-                                           GROUP BY {dimension}  {having}
+                                           GROUP BY {dimension}{group_by}  {having}
                                            {limit})
                                            FORMAT JSON
                                            '''.format(dimension=dim,updm=updm,
                                                       metric_counts=metric_counts,
                                                       filt=filt, limit=limit,
                                                       sort_order=sort_order,
-                                                      having=having, table=table, date_filt=date_filt)
+                                                      having=having, table=table, date_filt=date_filt,group_by=group_by)
         all_labeldicts = json.loads(get_clickhouse_data(q_all, 'http://85.143.172.199:8123'))['data']
         all_label = []
         sorted_array = array_dates[0]
@@ -351,19 +359,21 @@ def CHapi(request):
             q_total = ''' SELECT {metric_counts}
                     FROM {table}
                     WHERE {date_field} BETWEEN '{date1}' AND '{date2}'
+                    GROUP BY {group_by} {having}
                     ORDER BY NULL {sort_order}
                     FORMAT JSON
                    '''.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,
-                              sort_order=sort_order,table=table,date_field=date_field)
+                              sort_order=sort_order,table=table,date_field=date_field,group_by=group_by[1:],having=having)
 
             # С фильтром
             q = ''' SELECT {metric_counts}
                                 FROM {table}
                                 WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                                GROUP BY {group_by} {having}
                                 ORDER BY NULL {sort_order}
                                 FORMAT JSON
                                '''.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,
-                                          filt=filt, sort_order=sort_order,table=table,date_field=date_field)
+                                          filt=filt, sort_order=sort_order,table=table,date_field=date_field,having=having,group_by=group_by[1:])
             #Проверка на существование записей, если их нет, возвращаем нули
             try:
                 a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
@@ -546,24 +556,22 @@ def CHapi(request):
             for date in period:
                 q = '''SELECT {dimension},{metric_counts} FROM {table}
                                    WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
-                                   GROUP BY {dimension}  {having}
+                                   GROUP BY {dimension}{group_by}  {having}
                                    ORDER BY {sort_column} {sort_order}
                                    {limit}
                                    FORMAT JSON
                                    '''.format(dimension=dim[0], metric_counts=metric_counts,
                                               date1=date['date1'],sort_column=sort_column_in_query,
                                               date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
-                                              having=having, table=table, date_field=date_field)
+                                              having=having, table=table, date_field=date_field,group_by=group_by)
                 print(q)
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
-            dates_dicts=datesdicts(array_dates,dim[0],having,table,date_filt,1)
+            dates_dicts=datesdicts(array_dates,dim[0],having,table,date_filt,1,group_by)
 
                 #определим самый большой список в array_dates
             for i in array_dates[MaxLenNum(array_dates)]:
                 if search_pattern.lower() not in str(i[dim[0]]).lower():
                     continue
-
-
                 stat_dict = {'label': i[dim[0]],
                              'segment': '{label}=={value}'.format(label=dim[0]
                                                                   , value=i[dim[0]])
@@ -706,7 +714,11 @@ def CHapi(request):
                 if sub_str.partition(j)[2]=='':
                     pass
                 else:
-                    sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
+                    try:
+                        int(sub_str.partition(j)[2])
+                        sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
+                    except:
+                        sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
                     break
             for j in range(len(like_operators)):
                 if sub_str.partition(like_operators[j])[2]=='':
@@ -770,12 +782,8 @@ def CHapi(request):
             filt=" "
         else:
             filt="AND"+"("+FilterParse(filter)+")"
-        try:
-            filter_metric = json.loads(request.body.decode('utf-8'))['filter_metric']
-        except:
-            having=" "
-        else:
-            having = 'HAVING'+' '+FilterParse(filter_metric)
+
+        having = 'HAVING 1'
         try:
             search_pattern=json.loads(request.body.decode('utf-8'))['search_pattern']
 
@@ -802,7 +810,8 @@ def CHapi(request):
             dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
         dimension_counts=','.join(dimension_counts)
         # ФОрмируем массив с запросом каждого показателя в SQL
-        metric_counts=MetricCounts(metrics,headers)
+        group_by=''
+        having,group_by,metric_counts=MetricCounts(metrics,headers,having,group_by)
 
         #Фильтр по всем датам
         date_filt = []
