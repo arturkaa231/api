@@ -103,7 +103,7 @@ def MetricCounts(metrics, headers, having, group_by):
     return having, group_by, ','.join(metric_counts)
 @csrf_exempt
 def CHapi(request):
-    def datesdicts(array_dates, dim,having,table,date_filt,updm,group_by):
+    def datesdicts(array_dates, dim,table,date_filt,updm):
         q_all = '''SELECT {dimension} FROM (SELECT {dimension},{metric_counts} FROM {table}
                                            WHERE 1 {filt} AND {date_filt} AND {updm}
                                            GROUP BY {dimension}
@@ -560,10 +560,10 @@ def CHapi(request):
                                    '''.format(dimension=dim[0], metric_counts=metric_counts,
                                               date1=date['date1'],sort_column=sort_column_in_query,
                                               date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
-                                              having=having, table=table, date_field=date_field)
+                                              table=table, date_field=date_field)
                 print(q)
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
-            dates_dicts=datesdicts(array_dates,dim[0],having,table,date_filt,1,group_by)
+            dates_dicts=datesdicts(array_dates,dim[0],table,date_filt,1)
 
                 #определим самый большой список в array_dates
             for i in array_dates[MaxLenNum(array_dates)]:
