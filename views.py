@@ -14,6 +14,12 @@ def MetricCounts(metrics, headers):
     metric_counts = []
 
     for i in metrics:
+        if 'avg_visit_length' in i:
+            metric_counts.append(
+                "if(uniq(idVisit)=0,0,floor(sum(visitDuration)/uniq(idVisit),2)) as {metric}".format(
+                    metric=i))
+            continue
+
         if 'nb_return_visitors' in i:
             metric_counts.append(
                 "CAST(uniqIf(visitorId,visitorType='returning'),'Int') as {metric}".format(
@@ -711,7 +717,7 @@ def CHapi(request):
                 if sub_str.partition(j)[2]=='':
                     pass
                 else:
-                    try:
+                    try:#если значение в подфильтре целочисленное, то не добавляем кавычки
                         int(sub_str.partition(j)[2])
                         sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
                     except:
