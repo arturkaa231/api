@@ -22,7 +22,7 @@ def MetricCounts(metrics, headers):
 
         if 'nb_return_visitors' in i:
             metric_counts.append(
-                "CAST(uniqIf(visitorId,visitorType='returning'),'Int') as {metric}".format(
+                "CAST(uniq(visitorId)-uniqIf(visitorId,visitorType='new'),'Int') as {metric}".format(
                     metric=i))
             continue
         if 'nb_new_visits_per_all_visits' in i:
