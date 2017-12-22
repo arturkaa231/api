@@ -103,18 +103,17 @@ def MetricCounts(metrics, headers, having, group_by):
     return having, group_by, ','.join(metric_counts)
 @csrf_exempt
 def CHapi(request):
-
     def datesdicts(array_dates, dim,having,table,date_filt,updm,group_by):
         q_all = '''SELECT {dimension} FROM (SELECT {dimension},{metric_counts} FROM {table}
                                            WHERE 1 {filt} AND {date_filt} AND {updm}
-                                           GROUP BY {dimension}{group_by}  {having}
+                                           GROUP BY {dimension}
                                            {limit})
                                            FORMAT JSON
                                            '''.format(dimension=dim,updm=updm,
                                                       metric_counts=metric_counts,
                                                       filt=filt, limit=limit,
                                                       sort_order=sort_order,
-                                                      having=having, table=table, date_filt=date_filt,group_by=group_by)
+                                                      table=table, date_filt=date_filt)
         all_labeldicts = json.loads(get_clickhouse_data(q_all, 'http://85.143.172.199:8123'))['data']
         all_label = []
         sorted_array = array_dates[0]
@@ -359,21 +358,19 @@ def CHapi(request):
             q_total = ''' SELECT {metric_counts}
                     FROM {table}
                     WHERE {date_field} BETWEEN '{date1}' AND '{date2}'
-                    GROUP BY {group_by} {having}
                     ORDER BY NULL {sort_order}
                     FORMAT JSON
                    '''.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,
-                              sort_order=sort_order,table=table,date_field=date_field,group_by=group_by[1:],having=having)
+                              sort_order=sort_order,table=table,date_field=date_field)
 
             # С фильтром
             q = ''' SELECT {metric_counts}
                                 FROM {table}
                                 WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
-                                GROUP BY {group_by} {having}
                                 ORDER BY NULL {sort_order}
                                 FORMAT JSON
                                '''.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,
-                                          filt=filt, sort_order=sort_order,table=table,date_field=date_field,having=having,group_by=group_by[1:])
+                                          filt=filt, sort_order=sort_order,table=table,date_field=date_field)
             #Проверка на существование записей, если их нет, возвращаем нули
             try:
                 a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
@@ -556,14 +553,14 @@ def CHapi(request):
             for date in period:
                 q = '''SELECT {dimension},{metric_counts} FROM {table}
                                    WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
-                                   GROUP BY {dimension}{group_by}  {having}
+                                   GROUP BY {dimension}
                                    ORDER BY {sort_column} {sort_order}
                                    {limit}
                                    FORMAT JSON
                                    '''.format(dimension=dim[0], metric_counts=metric_counts,
                                               date1=date['date1'],sort_column=sort_column_in_query,
                                               date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
-                                              having=having, table=table, date_field=date_field,group_by=group_by)
+                                              having=having, table=table, date_field=date_field)
                 print(q)
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dim[0],having,table,date_filt,1,group_by)
@@ -1124,7 +1121,11 @@ def diagram_stat(request):
                 if sub_str.partition(j)[2]=='':
                     pass
                 else:
-                    sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
+                    try:
+                        int(sub_str.partition(j)[2])
+                        sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
+                    except:
+                        sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
                     break
             for j in range(len(like_operators)):
                 if sub_str.partition(like_operators[j])[2]=='':
