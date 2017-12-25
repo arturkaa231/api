@@ -12,64 +12,95 @@ import string
 
 def MetricCounts(metrics, headers):
     metric_counts = []
-
     for i in metrics:
-        if 'avg_visit_length' in i:
+        if 'conversion_rate'==i:
+            metric_counts.append(
+                "if(uniq(idVisit)=0,0,floor(sum(Type='goal')*100/uniq(idVisit),2)) as {metric}".format(
+                    metric=i))
+            continue
+        if 'nb_new_visitors_per_all_visitors'==i:
+            metric_counts.append(
+                "if(uniq(visitorId)=0,0,floor(uniqIf(visitorId,visitorType='new')*100/uniq(visitorId),2)) as {metric}".format(
+                    metric=i))
+            continue
+        if 'nb_return_visitors_per_all_visitors'==i:
+            metric_counts.append(
+                "if(uniq(visitorId)=0,0,floor(uniqIf(visitorId,visitorType='returning')*100/uniq(visitorId),2)) as {metric}".format(
+                    metric=i))
+            continue
+        if 'nb_visits_with_searches'==i:
+            metric_counts.append(
+                "CAST(countIf(searches>0),'Int') as {metric}".format(
+                    metric=i))
+            continue
+        if 'nb_searches_visits_per_all_visits'==i:
+            metric_counts.append(
+                "if(uniq(idVisit)=0,0,floor(countIf(searches>0)*100/uniq(idVisit),2)) as {metric}".format(
+                    metric=i))
+            continue
+        if 'nb_searches'==i:
+            metric_counts.append(
+                "CAST(sum(searches),'Int') as {metric}".format(
+                    metric=i))
+            continue
+        if 'nb_downloas_per_visit'==i:
+            metric_counts.append("if(uniq(idVisit)=0,0,floor(sum(Type='download')/uniq(idVisit),2)) as {metric}".format(
+                metric=i))
+        if 'avg_visit_length'==i:
             metric_counts.append(
                 "if(uniq(idVisit)=0,0,floor(sum(visitDuration)/uniq(idVisit),2)) as {metric}".format(
                     metric=i))
             continue
-
-        if 'nb_return_visitors' in i:
+        if 'nb_return_visitors'==i:
             metric_counts.append(
                 "CAST(uniq(visitorId)-uniqIf(visitorId,visitorType='new'),'Int') as {metric}".format(
                     metric=i))
             continue
-        if 'nb_new_visits_per_all_visits' in i:
+        if 'nb_new_visits_per_all_visits'==i:
             metric_counts.append(
                 "if(uniq(idVisit)=0,0,floor(uniqIf(idVisit,visitorType='new')*100/uniq(idVisit),2)) as {metric}".format(
                     metric=i))
             continue
-        # ? как реализовтаь правильно
-        if 'nb_new_visits' in i:
+
+        if 'nb_new_visits'==i:
             metric_counts.append(
                 "CAST(uniqIf(idVisit,visitorType='new'),'Int') as {metric}".format(
                     metric=i))
             continue
-        if 'nb_new_visitors' in i:
+        if 'nb_new_visitors'==i:
             metric_counts.append(
                 "CAST(uniqIf(visitorId,visitorType='new'),'Int') as {metric}".format(
                     metric=i))
             continue
-        if 'nb_actions_per_visit' in i:
+        if 'nb_actions_per_visit'==i:
             metric_counts.append(
                 "if(uniq(idVisit)=0,0,floor(sum(actions)/uniq(idVisit),2)) as {metric}".format(metric=i))
             continue
-        if 'nb_pageviews_per_visit' in i:
+        if 'nb_pageviews_per_visit'==i:
             metric_counts.append("floor(sum(Type='action')/uniq(idVisit),2) as {metric}".format(metric=i))
             continue
-        if 'ctr' in i:
+        if 'ctr'==i:
             metric_counts.append(
                 "if(sum(shows)=0,0,floor((sum(clicks)/sum(shows))*100,2)) as {metric}".format(metric=i))
             continue
-        if 'avg_time_generation' in i:
+        if 'avg_time_generation'==i:
             metric_counts.append("floor(avg(generationTimeMilliseconds)/1000,2) as {metric}".format(metric=i))
             continue
-        if 'nb_downloads' in i:
+        if 'nb_downloads'==i:
             metric_counts.append("CAST(sum(Type='download'),'Int') as {metric}".format(metric=i))
             continue
-        if 'nb_conversions' in i:
+        if 'nb_conversions'==i:
             metric_counts.append("CAST(sum(Type='goal'),'Int') as {metric}".format(metric=i))
             continue
-        if 'nb_pageviews' in i:
+        if 'nb_pageviews'==i:
             metric_counts.append("CAST(sum(Type='action'),'Int') as {metric}".format(metric=i))
             continue
-        if 'bounce_rate' in i:
+        if 'bounce_rate'==i:
             metric_counts.append(
                 "if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2)) as {metric}".format(
                     metric=i))
             continue
-        if 'bounce_count' in i:
+        if 'bounce_count'==i:
             metric_counts.append("CAST(sum(visitDuration=0),'Int') as {metric}".format(metric=i))
             continue
         if 'calculated_metric' in i:
@@ -78,10 +109,18 @@ def MetricCounts(metrics, headers):
                     num=int(i[17:])),
                 headers=headers).content.decode('utf-8'))['results'][0]['definition']
 
-            calc_metr = calc_metr.replace('shows', 'sum(shows}').replace('spend', 'sum(spend)'). \
-                replace('clicks', 'sum(clicks)').replace('nb_visits', 'uniq(idVisit)').replace('nb_actions',
-                                                                                               'sum(actions)'). \
-                replace('nb_visitors', 'uniq(visitorId)')
+            calc_metr = calc_metr.replace('shows', 'sum(shows}').replace('nb_actions_per_visit',"if(uniq(idVisit)=0,0,floor(sum(actions)/uniq(idVisit),2))")\
+                    .replace('nb_downloas_per_visit',"if(uniq(idVisit)=0,0,floor(sum(Type='download')/uniq(idVisit),2))").replace('spend', 'sum(spend)')\
+                    .replace('clicks', 'sum(clicks)').replace('nb_visits_with_searches',"countIf(searches>0)").replace('nb_visits', 'uniq(idVisit)').replace('nb_actions','sum(actions)')\
+                    .replace('nb_visitors', 'uniq(visitorId)').replace('bounce_count','sum(visitDuration=0)').replace('bounce_rate','if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2))')\
+                    .replace('nb_pageviews',"sum(Type='action')").replace('nb_conversions',"sum(Type='goal')").replace('nb_downloads',"sum(Type='download')")\
+                    .replace('avg_time_generation',"floor(avg(generationTimeMilliseconds)/1000,2)").replace('ctr',"if(sum(shows)=0,0,floor((sum(clicks)/sum(shows))*100,2))")\
+                    .replace('nb_pageviews_per_visit',"floor(sum(Type='action')/uniq(idVisit),2)").replace('nb_new_visitors_per_all_visitors',"if(uniq(visitorId)=0,0,floor(uniqIf(visitorId,visitorType='new')*100/uniq(visitorId),2))")\
+                    .replace('nb_new_visitors',"uniqIf(visitorId,visitorType='new')").replace('nb_new_visits_per_all_visits',"if(uniq(idVisit)=0,0,floor(uniqIf(idVisit,visitorType='new')*100/uniq(idVisit),2))")\
+                    .replace('nb_new_visits',"uniqIf(idVisit,visitorType='new')").replace('nb_return_visitors_per_all_visitors',"if(uniq(visitorId)=0,0,floor(uniqIf(visitorId,visitorType='returning')*100/uniq(visitorId),2))").replace('nb_return_visitors',"uniq(visitorId)-uniqIf(visitorId,visitorType='new')")\
+                    .replace('avg_visit_length',"if(uniq(idVisit)=0,0,floor(sum(visitDuration)/uniq(idVisit),2))").replace('nb_searches_visits_per_all_visits',"if(uniq(idVisit)=0,0,floor(countIf(searches>0)*100/uniq(idVisit),2))")\
+                    .replace('nb_searches',"sum(searches)").replace('conversion_rate',"if(uniq(idVisit)=0,0,floor(sum(Type='goal')*100/uniq(idVisit),2))")
+            print(calc_metr)
             goal_conversions = re.findall(r'goal\d{1,3}_conversion', calc_metr)
             for goal_conversion in goal_conversions:
                 calc_metr = calc_metr.replace(goal_conversion,
