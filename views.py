@@ -758,6 +758,7 @@ def CHapi(request):
                 else:
                     try:#если значение в подфильтре целочисленное, то не добавляем кавычки
                         int(sub_str.partition(j)[2])
+                        json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://85.143.172.199:8123'))
                         sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
                     except:
                         sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
@@ -1143,54 +1144,61 @@ def diagram_stat(request):
         return stats
     def FilterParse(filt_string):
         """Метод для перевода  global_filter в строку для sql запроса"""
-        #filt_string=filt_string.replace(',',' OR ')
-        #filt_string = filt_string.replace(';', ' AND ')
-        #print(filt_string.partition('=@'))
-        simple_operators=['==','!=','>=','<=','>','<']
-        like_operators=['=@','!@','=^','=$','!^','!&']
-        like_str=[" LIKE '%{val}%'"," NOT LIKE '%{val}%'"," LIKE '{val}%'"," LIKE '%{val}'"," NOT LIKE '{val}%'"," NOT LIKE '%{val}'"]
-        match_operators=['=~','!~']
-        match_str=[" match({par}?'{val}')"," NOT match({par}?'{val}')"]
-        separator_indices=[]
+        # filt_string=filt_string.replace(',',' OR ')
+        # filt_string = filt_string.replace(';', ' AND ')
+        # print(filt_string.partition('=@'))
+        simple_operators = ['==', '!=', '>=', '<=', '>', '<']
+        like_operators = ['=@', '!@', '=^', '=$', '!^', '!&']
+        like_str = [" LIKE '%{val}%'", " NOT LIKE '%{val}%'", " LIKE '{val}%'", " LIKE '%{val}'", " NOT LIKE '{val}%'",
+                    " NOT LIKE '%{val}'"]
+        match_operators = ['=~', '!~']
+        match_str = [" match({par}?'{val}')", " NOT match({par}?'{val}')"]
+        separator_indices = []
         for i in range(len(filt_string)):
-            if filt_string[i]==',' or filt_string[i]==';':
+            if filt_string[i] == ',' or filt_string[i] == ';':
                 separator_indices.append(i)
         separator_indices.append(len(filt_string))
-        end_filt=""
+        end_filt = ""
         for i in range(len(separator_indices)):
-            if i==0:
+            if i == 0:
                 sub_str = filt_string[0:separator_indices[i]]
             else:
-                sub_str=filt_string[separator_indices[i-1]+1:separator_indices[i]]
+                sub_str = filt_string[separator_indices[i - 1] + 1:separator_indices[i]]
             for j in simple_operators:
-                if sub_str.partition(j)[2]=='':
+                if sub_str.partition(j)[2] == '':
                     pass
                 else:
-                    try:
+                    try:  # если значение в подфильтре целочисленное, то не добавляем кавычки
                         int(sub_str.partition(j)[2])
-                        sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
+                        json.loads(get_clickhouse_data(
+                            'SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(
+                                par=sub_str.partition(j)[0], val=sub_str.partition(j)[2]),
+                            'http://85.143.172.199:8123'))
+                        sub_str = sub_str.partition(j)[0] + j + sub_str.partition(j)[2]
                     except:
-                        sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
+                        sub_str = sub_str.partition(j)[0] + j + "'" + sub_str.partition(j)[2] + "'"
                     break
             for j in range(len(like_operators)):
-                if sub_str.partition(like_operators[j])[2]=='':
+                if sub_str.partition(like_operators[j])[2] == '':
                     pass
                 else:
-                    sub_str = sub_str.partition(like_operators[j])[0] +like_str[j].format(val=sub_str.partition(like_operators[j])[2])
+                    sub_str = sub_str.partition(like_operators[j])[0] + like_str[j].format(
+                        val=sub_str.partition(like_operators[j])[2])
                     break
             for j in range(len(match_operators)):
-                if sub_str.partition(match_operators[j])[2]=='':
+                if sub_str.partition(match_operators[j])[2] == '':
                     pass
                 else:
-                    sub_str = match_str[j].format(val=sub_str.partition(match_operators[j])[2],par=sub_str.partition(match_operators[j])[0])
+                    sub_str = match_str[j].format(val=sub_str.partition(match_operators[j])[2],
+                                                  par=sub_str.partition(match_operators[j])[0])
                     break
             try:
-                end_filt=end_filt+sub_str+filt_string[separator_indices[i]]
+                end_filt = end_filt + sub_str + filt_string[separator_indices[i]]
             except:
                 end_filt = end_filt + sub_str
 
-        end_filt=end_filt.replace(',',' OR ')
-        end_filt=end_filt.replace(';',' AND ')
+        end_filt = end_filt.replace(',', ' OR ')
+        end_filt = end_filt.replace(';', ' AND ')
         end_filt = end_filt.replace('?', ',')
         return end_filt
     if request.method=='POST':
