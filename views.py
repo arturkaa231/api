@@ -382,13 +382,15 @@ def CHapi(request):
         return r.text
     def AddCounts(period,dimension_counts,filt,sort_order,table,date_filt):
         """Добавление ключа Counts в ответ"""
+
         q = ''' SELECT {dimension_counts}
                      FROM {table}
                      WHERE 1 {filt} AND {date_filt}
                      ORDER BY NULL {sort_order}
                      FORMAT JSON
-                    '''.format(date1=period[0]['date1'], date2=period[0]['date2'], dimension_counts=dimension_counts, filt=filt,
+                    '''.format(date1=period[0]['date1'], date2=period[0]['date2'], dimension_counts=dimension_counts, filt=filt.replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))"),
                                sort_order=sort_order,table=table,date_filt=date_filt)
+        print(q)
         b = {}
         try:
             # Объеденяем словарь с датами со словарем  вернувшихся значений каждого из запрошенных параметров
@@ -419,7 +421,7 @@ def CHapi(request):
                                 ORDER BY NULL {sort_order}
                                 FORMAT JSON
                                '''.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,
-                                          filt=filt, sort_order=sort_order,table=table,date_field=date_field)
+                                          filt=filt.replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))"), sort_order=sort_order,table=table,date_field=date_field)
             #Проверка на существование записей, если их нет, возвращаем нули
             try:
                 a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
@@ -610,7 +612,7 @@ def CHapi(request):
                                               date1=date['date1'],sort_column=sort_column_in_query,
                                               date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
                                               table=table, date_field=date_field)
-                print(q)
+
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1)
 
@@ -1003,7 +1005,7 @@ def diagram_stat(request):
                      WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                      ORDER BY NULL {sort_order}
                      FORMAT JSON
-                    '''.format(date1=date1, date2=date2, dimension_counts=dimension_counts, filt=filt,
+                    '''.format(date1=date1, date2=date2, dimension_counts=dimension_counts, filt=filt.replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))"),
                                sort_order=sort_order,table=table,date_field=date_field)
         b = {}
         try:
@@ -1035,7 +1037,7 @@ def diagram_stat(request):
                                 ORDER BY NULL {sort_order}
                                 FORMAT JSON
                                '''.format(date1=date1, date2=date2, metric_counts=metric_counts,
-                                          filt=filt, sort_order=sort_order,table=table,date_field=date_field)
+                                          filt=filt.replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))"), sort_order=sort_order,table=table,date_field=date_field)
             #Проверка на существование записей, если их нет, возвращаем нули
         try:
             a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
