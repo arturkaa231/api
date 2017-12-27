@@ -148,13 +148,13 @@ def MetricCounts(metrics, headers):
     return  ','.join(metric_counts)
 @csrf_exempt
 def CHapi(request):
-    def datesdicts(array_dates, dim,table,date_filt,updm):
-        q_all = '''SELECT {dimension} FROM (SELECT {dimension},{metric_counts} FROM {table}
+    def datesdicts(array_dates, dim,dim_with_alias,table,date_filt,updm):
+        q_all = '''SELECT {dimension_with_alias} FROM {table}
                                            WHERE 1 {filt} AND {date_filt} AND {updm}
                                            GROUP BY {dimension}
-                                           {limit})
+                                           {limit}
                                            FORMAT JSON
-                                           '''.format(dimension=dim,updm=updm,
+                                           '''.format(dimension_with_alias=dim_with_alias,dimension=dim,updm=updm,
                                                       metric_counts=metric_counts,
                                                       filt=filt, limit=limit,
                                                       sort_order=sort_order,
@@ -197,9 +197,14 @@ def CHapi(request):
         #Добавляем параметры в список с параметрами верхних уровней
         #Если предыдущий уровень-сегмент, не добавляем фильтр
         try:
-            updimensions.append(
+            if type(i[dimensionslist_with_segments[n]]) is int:
+                updimensions.append(
+                    "CAST(toDayOfWeek(toDate(serverTimestamp)),'Int')={updimension_val}".format(updimension_val=i[dimensionslist_with_segments[n]],
+                                                               updimension=dimensionslist_with_segments_and_aliases[n]))
+            else:
+                updimensions.append(
             "{updimension}='{updimension_val}'".format(updimension_val=i[dimensionslist_with_segments[n]],
-                                                       updimension=dimensionslist_with_segments[n]))
+                                                       updimension=dimensionslist_with_segments_and_aliases[n]))
         except:
             pass
         sub=[]
@@ -333,21 +338,21 @@ def CHapi(request):
             else:
                 sort_column_in_query = sort_column
             for date in period:
-                q = '''SELECT {dimension},{metric_counts} FROM {table}
+                q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
                                                                     WHERE 1 {filt} AND {updimensions} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                                                     GROUP BY {dimension}
                                                                     ORDER BY {sort_column} {sort_order}
                                                                     FORMAT JSON
-                                                                    '''.format(dimension=dimension,
+                                                                    '''.format(dimension_with_alias=dimensionslist_with_segments_and_aliases[n+1],dimension=dimension,
                                                                                updimensions=updm,sort_column=sort_column_in_query,sort_order=sort_order,
                                                                                metric_counts=metric_counts,
                                                                                date1=date['date1'],
                                                                                date2=date['date2'], filt=filt,
                                                                                having=having, table=table,
                                                                                date_field=date_field)
-
+                print(q)
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
-            dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],table,date_filt,updm)
+            dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm)
             for i2 in array_dates[MaxLenNum(array_dates)]:
                 stat_dict = {'label': i2[dimensionslist_with_segments[n + 1]],
                              'segment':'{label}=={value}'.format(label=dimensionslist_with_segments[n + 1]
@@ -377,7 +382,6 @@ def CHapi(request):
         return r.text
     def AddCounts(period,dimension_counts,filt,sort_order,table,date_filt):
         """Добавление ключа Counts в ответ"""
-
         q = ''' SELECT {dimension_counts}
                      FROM {table}
                      WHERE 1 {filt} AND {date_filt}
@@ -519,7 +523,7 @@ def CHapi(request):
                 stat_dict['sub'] = RecStats(0, i, updimensions,table)
             stats.append(stat_dict)
         return stats
-    def AddStats2(dim, metric_counts, filt, limit, having, period, metrics, table,date_filt):
+    def AddStats2(dim,dim_with_alias, metric_counts, filt, limit, period, metrics, table,date_filt):
         """Добавление ключа stats в ответ"""
         stats = []
         #Определяем, есть ли вначале dimensions группа сегментов
@@ -596,19 +600,19 @@ def CHapi(request):
             else:
                 sort_column_in_query=sort_column
             for date in period:
-                q = '''SELECT {dimension},{metric_counts} FROM {table}
+                q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
                                    WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                    GROUP BY {dimension}
                                    ORDER BY {sort_column} {sort_order}
                                    {limit}
                                    FORMAT JSON
-                                   '''.format(dimension=dim[0], metric_counts=metric_counts,
+                                   '''.format(dimension_with_alias=dim_with_alias[0],dimension=dim[0], metric_counts=metric_counts,
                                               date1=date['date1'],sort_column=sort_column_in_query,
                                               date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
                                               table=table, date_field=date_field)
                 print(q)
                 array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
-            dates_dicts=datesdicts(array_dates,dim[0],table,date_filt,1)
+            dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1)
 
                 #определим самый большой список в array_dates
             for i in array_dates[MaxLenNum(array_dates)]:
@@ -633,8 +637,13 @@ def CHapi(request):
                 if len(dim) > 1:
                     # Добавляем подуровень
                     try:
-                        updimensions.append("{updimension}='{updimension_val}'".format(updimension_val=i[dim[0]],
-                                                                                       updimension=dim[0]))
+                        if type(i[dim[0]]) is int:
+
+                            updimensions.append("CAST(toDayOfWeek(toDate(serverTimestamp)),'Int')={updimension_val}".format(updimension_val=i[dim[0]],
+                                                                                           updimension=dim_with_alias[0]))
+                        else:
+                            updimensions.append("{updimension}='{updimension_val}'".format(updimension_val=i[dim[0]],
+                                                                                       updimension=dim_with_alias[0]))
                     except:
                         pass
                     up_dim=stat_dict.copy()#Передаем словарь с информацией о вернем уровне "Все файлы"
@@ -674,10 +683,8 @@ def CHapi(request):
                 counter+=1
             counter = 0
             for i in array_dates[0]:
-
                 if search_pattern.lower() not in str(i['label']).lower():
                     continue
-
                 stat_dict = {'label': i['label'],
                                 'segment': i['segment'],}
                 dates = []
@@ -761,7 +768,10 @@ def CHapi(request):
                         json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://85.143.172.199:8123'))
                         sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
                     except:
-                        sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
+                        if sub_str.partition(j)[0]=='day_of_week_code':
+                            sub_str = sub_str.partition(j)[0] + j + sub_str.partition(j)[2]
+                        else:
+                            sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
                     break
             for j in range(len(like_operators)):
                 if sub_str.partition(like_operators[j])[2]=='':
@@ -799,13 +809,18 @@ def CHapi(request):
             sort_column = json.loads(request.body.decode('utf-8'))['sort_column']
         except:
             sort_column=""
-
         dimensionslist_with_segments=json.loads(request.body.decode('utf-8'))['dimensions']
         dimensionslist = []
         #Создание списка параметров без сегментов
+        dimensionslist_with_segments_and_aliases=[]
         for d in dimensionslist_with_segments:
-            if 'segment' not in d and type(d)!=list:
+            if 'segment' not in d and d!=list:
                 dimensionslist.append(d)
+                if d == 'day_of_week_code':
+                    dimensionslist_with_segments_and_aliases.append("CAST(toDayOfWeek(toDate(serverTimestamp)),'Int') as day_of_week_code")
+                    continue
+            dimensionslist_with_segments_and_aliases.append(d)
+
         metrics = json.loads(request.body.decode('utf-8'))['metrics']
         #если в запросе не указан сдвиг, зададим его равным нулю
         try:
@@ -850,7 +865,10 @@ def CHapi(request):
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
         for i in dimensionslist:
-            dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
+            if i=='day_of_week_code':
+                dimension_counts.append("CAST(uniq(toDayOfWeek(toDate(serverTimestamp))),'Int') as hday_of_week_code".format(dimension=i))
+            else:
+                dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
         dimension_counts=','.join(dimension_counts)
         # ФОрмируем массив с запросом каждого показателя в SQL
 
@@ -871,7 +889,7 @@ def CHapi(request):
         # Добавляем в выходной словарь параметр metric_sums
         resp['metric_sums']={}
         resp['metric_sums']['dates'] = AddMetricSums(period,metric_counts,filt,metrics,sort_order,table)
-        stats=AddStats2(dimensionslist_with_segments,metric_counts,filt,limit,having,period,metrics,table,date_filt)
+        stats=AddStats2(dimensionslist_with_segments,dimensionslist_with_segments_and_aliases,metric_counts,filt,limit,period,metrics,table,date_filt)
         # Добавляем stats
         resp['stats']=stats
         pprint.pprint(resp)
@@ -1065,19 +1083,19 @@ def diagram_stat(request):
             st_d['dates'] = dates
             counter+=1
         return st_d
-    def AddStats2(dimensionslist, metric_counts, filt, limit, having, date1,date2, metrics, table):
+    def AddStats2(dimensionslist,dim_with_aliases, metric_counts, filt, limit, having, date1,date2, metrics, table):
         """Добавление ключа stats в ответ"""
         #Определяем, есть ли вначале dimensions группа сегментов
         q="""
-        SELECT {dimensions},({metric_counts}) as metrics
+        SELECT {dimensions_with_aliases},({metric_counts}) as metrics
         FROM {table}
         WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
         GROUP BY {dimensions}
         ORDER BY {sort_column} {sort_order}
         {limit}
         FORMAT JSON
-        """.format(date1=date1,date2=date2,filt=filt,date_field=date_field,table=table,limit=limit,sort_column=sort_column,sort_order=sort_order,metric_counts=metric_counts,dimensions=','.join(dimensionslist))
-
+        """.format(dimensions_with_aliases=','.join(dim_with_aliases),date1=date1,date2=date2,filt=filt,date_field=date_field,table=table,limit=limit,sort_column=sort_column,sort_order=sort_order,metric_counts=metric_counts,dimensions=','.join(dimensionslist))
+        print(q)
         stats=json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data']
         #Если показатеь один, обрабатываем ошибку
 
@@ -1144,61 +1162,58 @@ def diagram_stat(request):
         return stats
     def FilterParse(filt_string):
         """Метод для перевода  global_filter в строку для sql запроса"""
-        # filt_string=filt_string.replace(',',' OR ')
-        # filt_string = filt_string.replace(';', ' AND ')
-        # print(filt_string.partition('=@'))
-        simple_operators = ['==', '!=', '>=', '<=', '>', '<']
-        like_operators = ['=@', '!@', '=^', '=$', '!^', '!&']
-        like_str = [" LIKE '%{val}%'", " NOT LIKE '%{val}%'", " LIKE '{val}%'", " LIKE '%{val}'", " NOT LIKE '{val}%'",
-                    " NOT LIKE '%{val}'"]
-        match_operators = ['=~', '!~']
-        match_str = [" match({par}?'{val}')", " NOT match({par}?'{val}')"]
-        separator_indices = []
+        #filt_string=filt_string.replace(',',' OR ')
+        #filt_string = filt_string.replace(';', ' AND ')
+        #print(filt_string.partition('=@'))
+        simple_operators=['==','!=','>=','<=','>','<']
+        like_operators=['=@','!@','=^','=$','!^','!&']
+        like_str=[" LIKE '%{val}%'"," NOT LIKE '%{val}%'"," LIKE '{val}%'"," LIKE '%{val}'"," NOT LIKE '{val}%'"," NOT LIKE '%{val}'"]
+        match_operators=['=~','!~']
+        match_str=[" match({par}?'{val}')"," NOT match({par}?'{val}')"]
+        separator_indices=[]
         for i in range(len(filt_string)):
-            if filt_string[i] == ',' or filt_string[i] == ';':
+            if filt_string[i]==',' or filt_string[i]==';':
                 separator_indices.append(i)
         separator_indices.append(len(filt_string))
-        end_filt = ""
+        end_filt=""
         for i in range(len(separator_indices)):
-            if i == 0:
+            if i==0:
                 sub_str = filt_string[0:separator_indices[i]]
             else:
-                sub_str = filt_string[separator_indices[i - 1] + 1:separator_indices[i]]
+                sub_str=filt_string[separator_indices[i-1]+1:separator_indices[i]]
             for j in simple_operators:
-                if sub_str.partition(j)[2] == '':
+                if sub_str.partition(j)[2]=='':
                     pass
                 else:
-                    try:  # если значение в подфильтре целочисленное, то не добавляем кавычки
+                    try:#если значение в подфильтре целочисленное, то не добавляем кавычки
                         int(sub_str.partition(j)[2])
-                        json.loads(get_clickhouse_data(
-                            'SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(
-                                par=sub_str.partition(j)[0], val=sub_str.partition(j)[2]),
-                            'http://85.143.172.199:8123'))
-                        sub_str = sub_str.partition(j)[0] + j + sub_str.partition(j)[2]
+                        json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://85.143.172.199:8123'))
+                        sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
                     except:
-                        sub_str = sub_str.partition(j)[0] + j + "'" + sub_str.partition(j)[2] + "'"
+                        if sub_str.partition(j)[0]=='day_of_week_code':
+                            sub_str = sub_str.partition(j)[0] + j + sub_str.partition(j)[2]
+                        else:
+                            sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
                     break
             for j in range(len(like_operators)):
-                if sub_str.partition(like_operators[j])[2] == '':
+                if sub_str.partition(like_operators[j])[2]=='':
                     pass
                 else:
-                    sub_str = sub_str.partition(like_operators[j])[0] + like_str[j].format(
-                        val=sub_str.partition(like_operators[j])[2])
+                    sub_str = sub_str.partition(like_operators[j])[0] +like_str[j].format(val=sub_str.partition(like_operators[j])[2])
                     break
             for j in range(len(match_operators)):
-                if sub_str.partition(match_operators[j])[2] == '':
+                if sub_str.partition(match_operators[j])[2]=='':
                     pass
                 else:
-                    sub_str = match_str[j].format(val=sub_str.partition(match_operators[j])[2],
-                                                  par=sub_str.partition(match_operators[j])[0])
+                    sub_str = match_str[j].format(val=sub_str.partition(match_operators[j])[2],par=sub_str.partition(match_operators[j])[0])
                     break
             try:
-                end_filt = end_filt + sub_str + filt_string[separator_indices[i]]
+                end_filt=end_filt+sub_str+filt_string[separator_indices[i]]
             except:
                 end_filt = end_filt + sub_str
 
-        end_filt = end_filt.replace(',', ' OR ')
-        end_filt = end_filt.replace(';', ' AND ')
+        end_filt=end_filt.replace(',',' OR ')
+        end_filt=end_filt.replace(';',' AND ')
         end_filt = end_filt.replace('?', ',')
         return end_filt
     if request.method=='POST':
@@ -1213,17 +1228,25 @@ def diagram_stat(request):
             sort_order=""
         #сортировка по переданному показателю
 
-
         dimensionslist_with_segments=json.loads(request.body.decode('utf-8'))['dimensions']
         try:
             sort_column = json.loads(request.body.decode('utf-8'))['sort_column']
         except:
             sort_column=dimensionslist_with_segments[0]
         dimensionslist = []
+        dimensionslist_with_aliases=[]
         #Создание списка параметров без сегментов
+
         for d in dimensionslist_with_segments:
+
             if 'segment' not in d and type(d)!=list:
                 dimensionslist.append(d)
+                if d=='day_of_week_code':
+                    dimensionslist_with_aliases.append(
+                    "CAST(toDayOfWeek(toDate(serverTimestamp)),'Int') as day_of_week_code")
+                    continue
+                dimensionslist_with_aliases.append(d)
+
         metrics = json.loads(request.body.decode('utf-8'))['metrics']
         #если в запросе не указан сдвиг, зададим его равным нулю
         try:
@@ -1288,7 +1311,7 @@ def diagram_stat(request):
         # Добавляем в выходной словарь параметр metric_sums
         resp['metric_sums']={}
         resp['metric_sums']['dates'] = AddMetricSums(date1,date2,metric_counts,filt,metrics,sort_order,table)
-        stats=AddStats2(dimensionslist,metric_counts,filt,limit,having,date1,date2,metrics,table)
+        stats=AddStats2(dimensionslist,dimensionslist_with_aliases,metric_counts,filt,limit,having,date1,date2,metrics,table)
         # Добавляем stats
         resp['stats']=stats
         pprint.pprint(resp)
