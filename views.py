@@ -197,17 +197,20 @@ def CHapi(request):
         #Добавляем параметры в список с параметрами верхних уровней
         #Если предыдущий уровень-сегмент, не добавляем фильтр
         try:
-            if dimensionslist_with_segments[n] == 'day_of_week_code':
-                updimensions.append("CAST(toDayOfWeek(toDate(serverTimestamp)),'Int')={updimension_val}".format(
-                    updimension_val=i[dimensionslist_with_segments[n]]))
-            elif dimensionslist_with_segments[n] == 'day_of_week':
-                updimensions.append(
-                    "transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')='{updimension_val}'".format(
-                        updimension_val=i[dimensionslist_with_segments[n]]))
+            if dimensionslist_with_segments[n] in time_dimensions_dict.keys():
+                if type(i[dimensionslist_with_segments[n]]) is int:
+                    print('hui')
+                    updimensions.append(
+                        "{updimension}={updimension_val}".format(updimension=time_dimensions_dict[dimensionslist_with_segments[n]],
+                                                                 updimension_val=i[dimensionslist_with_segments[n]]))
+                else:
+                    updimensions.append(
+                        "{updimension}='{updimension_val}'".format(updimension=time_dimensions_dict[dimensionslist_with_segments[n]],
+                                                                 updimension_val=i[dimensionslist_with_segments[n]]))
             else:
                 updimensions.append(
             "{updimension}='{updimension_val}'".format(updimension_val=i[dimensionslist_with_segments[n]],
-                                                       updimension=dimensionslist_with_segments_and_aliases[n]))
+                                                       updimension=dimensionslist_with_segments[n]))
         except:
             pass
         sub=[]
@@ -640,19 +643,18 @@ def CHapi(request):
 
                 stat_dict['dates'] = dates
                 if len(dim) > 1:
-                    # Добавляем подуровень
+                    # Добавляем подуровень. Если параметр вычисляемый то подставляем его название из словаря time_dimensions_dict
                     try:
-
-                        if dim[0]=='day_of_week_code':
-                            updimensions.append("CAST(toDayOfWeek(toDate(serverTimestamp)),'Int')={updimension_val}".format(updimension_val=i[dim[0]]))
-                        elif dim[0]=='day_of_week':
-                            updimensions.append(
-                                "transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')='{updimension_val}'".format(
-                                    updimension_val=i[dim[0]]))
-
+                        if dim[0] in time_dimensions_dict.keys():
+                            if type(i[dim[0]]) is int:
+                                updimensions.append("{updimension}={updimension_val}".format(updimension=time_dimensions_dict[dim[0]],updimension_val=i[dim[0]]))
+                            else:
+                                updimensions.append(
+                                    "{updimension}='{updimension_val}'".format(updimension=time_dimensions_dict[dim[0]],
+                                                                             updimension_val=i[dim[0]]))
                         else:
                             updimensions.append("{updimension}='{updimension_val}'".format(updimension_val=i[dim[0]],
-                                                                                       updimension=dim_with_alias[0]))
+                                                                                       updimension=dim[0]))
                     except:
                         pass
                     up_dim=stat_dict.copy()#Передаем словарь с информацией о вернем уровне "Все файлы"
@@ -777,7 +779,7 @@ def CHapi(request):
                         json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://85.143.172.199:8123'))
                         sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
                     except:
-                        if sub_str.partition(j)[0]=='day_of_week_code':
+                        if sub_str.partition(j)[0]=='day_of_week_code' or sub_str.partition(j)[0]=='month_code':
                             sub_str = sub_str.partition(j)[0] + j + sub_str.partition(j)[2]
                         else:
                             sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
@@ -802,7 +804,8 @@ def CHapi(request):
         end_filt=end_filt.replace(',',' OR ')
         end_filt=end_filt.replace(';',' AND ')
         end_filt = end_filt.replace('?', ',')
-        return end_filt
+        return end_filt.replace('date','toDate(serverTimestamp)').replace('month_code','toMonth(toDate(serverTimestamp))').replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))")\
+                .replace('day_of_week',"transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')")
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
@@ -822,13 +825,26 @@ def CHapi(request):
         dimensionslist = []
         #Создание списка параметров без сегментов
         dimensionslist_with_segments_and_aliases=[]
+        time_dimensions_dict={}
         for d in dimensionslist_with_segments:
             if 'segment' not in d and d!=list:
                 dimensionslist.append(d)
                 if d == 'day_of_week_code':
-                    dimensionslist_with_segments_and_aliases.append("CAST(toDayOfWeek(toDate(serverTimestamp)),'Int') as day_of_week_code")
+                    time_dimensions_dict[d]="toDayOfWeek(toDate(serverTimestamp))"
+                    dimensionslist_with_segments_and_aliases.append("toDayOfWeek(toDate(serverTimestamp)) as day_of_week_code")
+                    continue
+                if d=='month_code':
+                    time_dimensions_dict[d] = "toMonth(toDate(serverTimestamp))"
+                    dimensionslist_with_segments_and_aliases.append(
+                        "toMonth(toDate(serverTimestamp)) as month_code")
+                    continue
+                if d=='date':
+                    time_dimensions_dict[d] = "toDate(serverTimestamp)"
+                    dimensionslist_with_segments_and_aliases.append(
+                        "toDate(serverTimestamp) as date")
                     continue
                 if d == 'day_of_week':
+                    time_dimensions_dict[d] = "transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')"
                     dimensionslist_with_segments_and_aliases.append(
                         "transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно') as day_of_week")
                     continue
@@ -852,12 +868,11 @@ def CHapi(request):
         except:
             filt=" "
         else:
-            filt="AND"+"("+FilterParse(filter).replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))").replace('day_of_week',"transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')")+")"
+            filt="AND"+"("+FilterParse(filter)+")"
 
         having = 'HAVING 1'
         try:
             search_pattern=json.loads(request.body.decode('utf-8'))['search_pattern']
-
         except:
             search_pattern=""
         #если список dimensionslist пуст, значит были переданы только сегменты
@@ -878,11 +893,8 @@ def CHapi(request):
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
         for i in dimensionslist:
-            if i=='day_of_week_code':
-                dimension_counts.append("CAST(uniq(toDayOfWeek(toDate(serverTimestamp))),'Int') as hday_of_week_code")
-            if i=='day_of_week':
-                dimension_counts.append(
-                    "CAST(uniq(transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')),'Int') as hday_of_week")
+            if i in time_dimensions_dict.keys():
+                dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension_alias}".format(dimension=time_dimensions_dict[i],dimension_alias=i))
             else:
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
         dimension_counts=','.join(dimension_counts)
@@ -1207,7 +1219,7 @@ def diagram_stat(request):
                         json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://85.143.172.199:8123'))
                         sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
                     except:
-                        if sub_str.partition(j)[0]=='day_of_week_code':
+                        if sub_str.partition(j)[0]=='day_of_week_code' or sub_str.partition(j)[0]=='month_code' :
                             sub_str = sub_str.partition(j)[0] + j + sub_str.partition(j)[2]
                         else:
                             sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
@@ -1232,7 +1244,8 @@ def diagram_stat(request):
         end_filt=end_filt.replace(',',' OR ')
         end_filt=end_filt.replace(';',' AND ')
         end_filt = end_filt.replace('?', ',')
-        return end_filt
+        return end_filt.replace('date','toDate(serverTimestamp)').replace('month_code','toMonth(toDate(serverTimestamp))').replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))")\
+                .replace('day_of_week',"transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')")
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
@@ -1253,15 +1266,27 @@ def diagram_stat(request):
         dimensionslist = []
         dimensionslist_with_aliases=[]
         #Создание списка параметров без сегментов
-
+        time_dimensions_dict = {}
         for d in dimensionslist_with_segments:
             if 'segment' not in d and type(d)!=list:
                 dimensionslist.append(d)
                 if d=='day_of_week_code':
+                    time_dimensions_dict[d]="toDayOfWeek(toDate(serverTimestamp))"
                     dimensionslist_with_aliases.append(
-                    "CAST(toDayOfWeek(toDate(serverTimestamp)),'Int') as day_of_week_code")
+                    "toDayOfWeek(toDate(serverTimestamp)) as day_of_week_code")
+                    continue
+                if d == 'month_code':
+                    time_dimensions_dict[d] = "toMonth(toDate(serverTimestamp))"
+                    dimensionslist_with_aliases.append(
+                        "toMonth(toDate(serverTimestamp)) as month_code")
+                    continue
+                if d == 'date':
+                    time_dimensions_dict[d] = "toDate(serverTimestamp)"
+                    dimensionslist_with_aliases.append(
+                        "toDate(serverTimestamp) as date")
                     continue
                 if d=='day_of_week':
+                    time_dimensions_dict[d] = "transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')"
                     dimensionslist_with_aliases.append(
                         "transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно') as day_of_week")
                     continue
@@ -1284,7 +1309,7 @@ def diagram_stat(request):
         try:
             filter = json.loads(request.body.decode('utf-8'))['filter']
             if filter != "":
-                filt = "AND"+"("+FilterParse(filter).replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))").replace('day_of_week',"transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')")+")"
+                filt = "AND"+"("+FilterParse(filter)+")"
             else:
                 filt=""
         except:
@@ -1319,12 +1344,8 @@ def diagram_stat(request):
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
         for i in dimensionslist:
-            if i == 'day_of_week_code':
-                dimension_counts.append("CAST(uniq(toDayOfWeek(toDate(serverTimestamp))),'Int') as hday_of_week_code")
-                continue
-            elif i == 'day_of_week':
-                dimension_counts.append(
-                    "CAST(uniq(transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')),'Int') as hday_of_week")
+            if i in time_dimensions_dict.keys():
+                dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension_alias}".format(dimension=time_dimensions_dict[i],dimension_alias=i))
             else:
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
         dimension_counts=','.join(dimension_counts)
