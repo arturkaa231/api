@@ -779,7 +779,7 @@ def CHapi(request):
                         json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://85.143.172.199:8123'))
                         sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
                     except:
-                        if sub_str.partition(j)[0]=='day_of_week_code' or sub_str.partition(j)[0]=='month_code':
+                        if sub_str.partition(j)[0] in ['day_of_week_code','month_code',"year","minute","second"]:
                             sub_str = sub_str.partition(j)[0] + j + sub_str.partition(j)[2]
                         else:
                             sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
@@ -805,7 +805,8 @@ def CHapi(request):
         end_filt=end_filt.replace(';',' AND ')
         end_filt = end_filt.replace('?', ',')
         return end_filt.replace('date','toDate(serverTimestamp)').replace('month_code','toMonth(toDate(serverTimestamp))').replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))")\
-                .replace('day_of_week',"transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')")
+                .replace('day_of_week',"transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')")\
+            .replace('year',"toYear(toDate(serverTimestamp))").replace('minute',"toMinute(toDateTime(serverTimestamp))").replace('second',"toSecond(toDateTime(serverTimestamp))")
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
@@ -829,6 +830,18 @@ def CHapi(request):
         for d in dimensionslist_with_segments:
             if 'segment' not in d and d!=list:
                 dimensionslist.append(d)
+                if d == 'second':
+                    time_dimensions_dict[d]="toSecond(toDateTime(serverTimestamp))"
+                    dimensionslist_with_segments_and_aliases.append("toSecond(toDateTime(serverTimestamp)) as second")
+                    continue
+                if d == 'minute':
+                    time_dimensions_dict[d]="toMinute(toDateTime(serverTimestamp))"
+                    dimensionslist_with_segments_and_aliases.append("toMinute(toDateTime(serverTimestamp)) as minute")
+                    continue
+                if d == 'year':
+                    time_dimensions_dict[d]="toYear(toDate(serverTimestamp))"
+                    dimensionslist_with_segments_and_aliases.append("toYear(toDate(serverTimestamp)) as year")
+                    continue
                 if d == 'day_of_week_code':
                     time_dimensions_dict[d]="toDayOfWeek(toDate(serverTimestamp))"
                     dimensionslist_with_segments_and_aliases.append("toDayOfWeek(toDate(serverTimestamp)) as day_of_week_code")
@@ -1219,7 +1232,7 @@ def diagram_stat(request):
                         json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://85.143.172.199:8123'))
                         sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
                     except:
-                        if sub_str.partition(j)[0]=='day_of_week_code' or sub_str.partition(j)[0]=='month_code' :
+                        if sub_str.partition(j)[0] in ['day_of_week_code','month_code',"year","minute","second"]:
                             sub_str = sub_str.partition(j)[0] + j + sub_str.partition(j)[2]
                         else:
                             sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
@@ -1245,7 +1258,8 @@ def diagram_stat(request):
         end_filt=end_filt.replace(';',' AND ')
         end_filt = end_filt.replace('?', ',')
         return end_filt.replace('date','toDate(serverTimestamp)').replace('month_code','toMonth(toDate(serverTimestamp))').replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))")\
-                .replace('day_of_week',"transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')")
+                .replace('day_of_week',"transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')")\
+            .replace('year',"toYear(toDate(serverTimestamp))").replace('minute',"toMinute(toDateTime(serverTimestamp))").replace('second',"toSecond(toDateTime(serverTimestamp))")
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
@@ -1270,6 +1284,18 @@ def diagram_stat(request):
         for d in dimensionslist_with_segments:
             if 'segment' not in d and type(d)!=list:
                 dimensionslist.append(d)
+                if d == 'second':
+                    time_dimensions_dict[d] = "toSecond(toDateTime(serverTimestamp))"
+                    dimensionslist_with_aliases.append("toSecond(toDateTime(serverTimestamp)) as second")
+                    continue
+                if d == 'minute':
+                    time_dimensions_dict[d] = "toMinute(toDateTime(serverTimestamp))"
+                    dimensionslist_with_aliases.append("toMinute(toDateTime(serverTimestamp)) as minute")
+                    continue
+                if d == 'year':
+                    time_dimensions_dict[d] = "toYear(toDate(serverTimestamp))"
+                    dimensionslist_with_aliases.append("toYear(toDate(serverTimestamp)) as year")
+                    continue
                 if d=='day_of_week_code':
                     time_dimensions_dict[d]="toDayOfWeek(toDate(serverTimestamp))"
                     dimensionslist_with_aliases.append(
