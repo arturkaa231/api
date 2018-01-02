@@ -805,7 +805,8 @@ def CHapi(request):
         end_filt=end_filt.replace(';',' AND ')
         end_filt = end_filt.replace('?', ',')
         return end_filt.replace('date','toDate(serverTimestamp)').replace('month_code','toMonth(toDate(serverTimestamp))').replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))")\
-                .replace('day_of_week',"transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')")\
+                .replace('day_of_week',"dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
+                        lang=lang))\
             .replace('year',"toYear(toDate(serverTimestamp))").replace('minute',"toMinute(toDateTime(serverTimestamp))").replace('second',"toSecond(toDateTime(serverTimestamp))")\
             .replace('month',"dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang))
     if request.method=='POST':
@@ -872,9 +873,12 @@ def CHapi(request):
                         "toDate(serverTimestamp) as date")
                     continue
                 if d == 'day_of_week':
-                    time_dimensions_dict[d] = "transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')"
+                    time_dimensions_dict[
+                        d] = "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
+                        lang=lang)
                     dimensionslist_with_segments_and_aliases.append(
-                        "transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно') as day_of_week")
+                        "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp)))) as day_of_week".format(
+                            lang=lang))
                     continue
             dimensionslist_with_segments_and_aliases.append(d)
 
