@@ -806,7 +806,8 @@ def CHapi(request):
         end_filt = end_filt.replace('?', ',')
         return end_filt.replace('date','toDate(serverTimestamp)').replace('month_code','toMonth(toDate(serverTimestamp))').replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))")\
                 .replace('day_of_week',"transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')")\
-            .replace('year',"toYear(toDate(serverTimestamp))").replace('minute',"toMinute(toDateTime(serverTimestamp))").replace('second',"toSecond(toDateTime(serverTimestamp))")
+            .replace('year',"toYear(toDate(serverTimestamp))").replace('minute',"toMinute(toDateTime(serverTimestamp))").replace('second',"toSecond(toDateTime(serverTimestamp))")\
+            .replace('month',"dictGetString('month','eng',toUInt64(toMonth(toDate(serverTimestamp))))")
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
@@ -830,6 +831,10 @@ def CHapi(request):
         for d in dimensionslist_with_segments:
             if 'segment' not in d and d!=list:
                 dimensionslist.append(d)
+                if d == 'month':
+                    time_dimensions_dict[d] = "dictGetString('month','eng',toUInt64(toMonth(toDate(serverTimestamp))))"
+                    dimensionslist_with_segments_and_aliases.append("dictGetString('month','eng',toUInt64(toMonth(toDate(serverTimestamp)))) as month")
+                    continue
                 if d == 'second':
                     time_dimensions_dict[d]="toSecond(toDateTime(serverTimestamp))"
                     dimensionslist_with_segments_and_aliases.append("toSecond(toDateTime(serverTimestamp)) as second")
