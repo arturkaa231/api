@@ -345,7 +345,7 @@ def CHapi(request):
             else:
                 sort_column_in_query = sort_column
             using=using+','+dimension#поля, по которым необходимо join-ить таблицы, если запрошены параметры статистики
-            if attribution_model == 'first_transition':
+            if attribution_model == 'first_interaction':
                 for date in period:
                     date0 = (datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
                     q = '''SELECT {dimension_with_alias},{sum_metric_string}
@@ -420,7 +420,7 @@ def CHapi(request):
                 tab='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
             else:
                 tab=table
-            if attribution_model != 'first_transition':
+            if attribution_model != 'first_interaction':
                 q = ''' SELECT {dimension_counts}
                      FROM {table}
                      WHERE 1 {filt} AND {date_filt}
@@ -654,7 +654,7 @@ def CHapi(request):
             using=dim[0]
             #если указана модель аттрибуции показатели рассчитываются для первого визита
 
-            if attribution_model=='first_transition':
+            if attribution_model=='first_interaction':
 
                 for date in period:
                     date0=(datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
