@@ -347,7 +347,7 @@ def CHapi(request):
             using=using+','+dimension#поля, по которым необходимо join-ить таблицы, если запрошены параметры статистики
             if attribution_model == 'first_transition':
                 for date in period:
-                    date0 = (datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
+                    date0 = (datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
                     q = '''SELECT {dimension_with_alias},{sum_metric_string}
                                FROM (SELECT visitorId,any({dimension_with_alias}) as {dimension_with_alias} FROM {table}
                                WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
@@ -382,7 +382,7 @@ def CHapi(request):
                                                                                date2=date['date2'], filt=filt,
                                                                                having=having, table=table.format(dimension=using),
                                                                                date_field=date_field)
-                    print(q)
+
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm)
             for i2 in array_dates[MaxLenNum(array_dates)]:
@@ -416,7 +416,7 @@ def CHapi(request):
         """Добавление ключа Counts в ответ"""
         a={}
         for dim_num in range(len(dimensionslist)):
-            if dimensionslist[dim_num] not in list_of_adstat_par:
+            if dimensionslist[dim_num] not in list_of_adstat_par and is_ad:
                 tab='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
             else:
                 tab=table
@@ -657,7 +657,7 @@ def CHapi(request):
             if attribution_model=='first_transition':
 
                 for date in period:
-                    date0=(datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
+                    date0=(datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
                     q = '''SELECT {dimension_with_alias},{sum_metric_string}
                     FROM (SELECT visitorId,any({dimension_with_alias}) as {dimension_with_alias} FROM {table}
                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
@@ -689,7 +689,7 @@ def CHapi(request):
                                                   date1=date['date1'],sort_column=sort_column_in_query,
                                                   date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
-
+                    print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1)
 
@@ -963,9 +963,10 @@ def CHapi(request):
                        'AdPosition', 'AdPositionType', 'AdRegionId', 'AdRetargetindId', 'AdPlacement', 'AdTargetId', 'AdvertisingSystem', 'DRF', 'campaignContent',
                        'campaignKeyword', 'campaignMedium', 'campaignName', 'campaignSource']
         is_ad=False
+        print(metrics)
         #Выбираем таблицу
-        for (dim,metr) in zip(dimensionslist,metrics):
-            if dim in list_of_adstat_par or metr in ['cost','impressions','clicks']:
+        for metr in metrics:
+            if metr in ['cost','impressions','clicks']:
                 table="""(SELECT
                 idSite,idVisit,visitIp,visitorId,goalConversions,siteCurrency,siteCurrencySymbol,serverDate,visitServerHour,lastActionTimestamp,
                 lastActionDateTime,userId,visitorType,visitorTypeIcon,visitConverted,visitConvertedIcon,visitCount,firstActionTimestamp,
@@ -980,10 +981,31 @@ def CHapi(request):
                 totalAbandonedCarts,totalAbandonedCartsItems,AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId,AdPosition,AdPositionType,AdRegionId,
                 AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF,Gclid,SmartClickId,decodedServerTimestamp,Cost,Clicks,Impressions,StatDate
                 FROM CHdatabase.visits
-                ALL INNER JOIN CHdatabase.adstat USING {dimension})
+                ALL LEFT JOIN CHdatabase.adstat USING {dimension})
                 ALL INNER JOIN CHdatabase.hits
                 USING idVisit"""
                 is_ad=True
+                break
+        for dim in dimensionslist:
+            if dim in ['Cost', 'Impressions', 'Clicks','StatDate']:
+                table = """(SELECT
+                    idSite,idVisit,visitIp,visitorId,goalConversions,siteCurrency,siteCurrencySymbol,serverDate,visitServerHour,lastActionTimestamp,
+                    lastActionDateTime,userId,visitorType,visitorTypeIcon,visitConverted,visitConvertedIcon,visitCount,firstActionTimestamp,
+                    visitEcommerceStatus,visitEcommerceStatusIcon,daysSinceFirstVisit,daysSinceLastEcommerceOrder,visitDuration,visitDurationPretty,
+                    searches,actions,interactions,referrerType,referrerTypeName,referrerName,referrerKeyword,referrerKeywordPosition,referrerUrl,
+                    referrerSearchEngineUrl,referrerSearchEngineIcon,languageCode,language,deviceType,deviceTypeIcon,deviceBrand,deviceModel,operatingSystem,
+                    operatingSystemName,operatingSystemIcon,operatingSystemCode,operatingSystemVersion,browserFamily,browserFamilyDescription,browser,browserName,
+                    browserIcon,browserCode,browserVersion,events,continent,continentCode,country,countryCode,countryFlag,region,regionCode,city,location,latitude,
+                    longitude,visitLocalTime,visitLocalHour,daysSinceLastVisit,customVariables,resolution,plugins,pluginsIcons,provider,providerName,providerUrl,dimension1,
+                    campaignId,campaignContent,campaignKeyword,campaignMedium,campaignName,campaignSource,serverTimestamp,serverTimePretty,serverDatePretty,
+                    serverDatePrettyFirstAction,serverTimePrettyFirstAction,totalEcommerceRevenue,totalEcommerceConversions,totalEcommerceItems,totalAbandonedCartsRevenue,
+                    totalAbandonedCarts,totalAbandonedCartsItems,AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId,AdPosition,AdPositionType,AdRegionId,
+                    AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF,Gclid,SmartClickId,decodedServerTimestamp,Cost,Clicks,Impressions,StatDate
+                    FROM CHdatabase.visits
+                    ALL LEFT JOIN CHdatabase.adstat USING {dimension})
+                    ALL INNER JOIN CHdatabase.hits
+                    USING idVisit"""
+                is_ad = True
                 break
 
         #Формируем массив с count() для каждого параметра
@@ -1122,7 +1144,7 @@ def diagram_stat(request):
         """Добавление ключа Counts в ответ"""
         a={}
         for dim_num in range(len(dimensionslist)):
-            if dimensionslist[dim_num] not in list_of_adstat_par:
+            if dimensionslist[dim_num] not in list_of_adstat_par and is_ad:
                 tab='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
             else:
                 tab=table
@@ -1510,8 +1532,8 @@ def diagram_stat(request):
                        'campaignKeyword', 'campaignMedium', 'campaignName', 'campaignSource']
         is_ad=False
         #Выбираем таблицу
-        for (dim,metr) in zip(dimensionslist,metrics):
-            if dim in list_of_adstat_par or metr in ['cost','impressions','clicks']:
+        for metr in metrics:
+            if metr in ['cost','impressions','clicks']:
                 table="""(SELECT
                 idSite,idVisit,visitIp,visitorId,goalConversions,siteCurrency,siteCurrencySymbol,serverDate,visitServerHour,lastActionTimestamp,
                 lastActionDateTime,userId,visitorType,visitorTypeIcon,visitConverted,visitConvertedIcon,visitCount,firstActionTimestamp,
@@ -1526,10 +1548,31 @@ def diagram_stat(request):
                 totalAbandonedCarts,totalAbandonedCartsItems,AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId,AdPosition,AdPositionType,AdRegionId,
                 AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF,Gclid,SmartClickId,decodedServerTimestamp,Cost,Clicks,Impressions,StatDate
                 FROM CHdatabase.visits
-                ALL INNER JOIN CHdatabase.adstat USING {dimension})
+                ALL LEFT JOIN CHdatabase.adstat USING {dimension})
                 ALL INNER JOIN CHdatabase.hits
                 USING idVisit"""
                 is_ad=True
+                break
+        for dim in dimensionslist:
+            if dim in ['Cost', 'Impressions', 'Clicks','StatDate']:
+                table = """(SELECT
+                    idSite,idVisit,visitIp,visitorId,goalConversions,siteCurrency,siteCurrencySymbol,serverDate,visitServerHour,lastActionTimestamp,
+                    lastActionDateTime,userId,visitorType,visitorTypeIcon,visitConverted,visitConvertedIcon,visitCount,firstActionTimestamp,
+                    visitEcommerceStatus,visitEcommerceStatusIcon,daysSinceFirstVisit,daysSinceLastEcommerceOrder,visitDuration,visitDurationPretty,
+                    searches,actions,interactions,referrerType,referrerTypeName,referrerName,referrerKeyword,referrerKeywordPosition,referrerUrl,
+                    referrerSearchEngineUrl,referrerSearchEngineIcon,languageCode,language,deviceType,deviceTypeIcon,deviceBrand,deviceModel,operatingSystem,
+                    operatingSystemName,operatingSystemIcon,operatingSystemCode,operatingSystemVersion,browserFamily,browserFamilyDescription,browser,browserName,
+                    browserIcon,browserCode,browserVersion,events,continent,continentCode,country,countryCode,countryFlag,region,regionCode,city,location,latitude,
+                    longitude,visitLocalTime,visitLocalHour,daysSinceLastVisit,customVariables,resolution,plugins,pluginsIcons,provider,providerName,providerUrl,dimension1,
+                    campaignId,campaignContent,campaignKeyword,campaignMedium,campaignName,campaignSource,serverTimestamp,serverTimePretty,serverDatePretty,
+                    serverDatePrettyFirstAction,serverTimePrettyFirstAction,totalEcommerceRevenue,totalEcommerceConversions,totalEcommerceItems,totalAbandonedCartsRevenue,
+                    totalAbandonedCarts,totalAbandonedCartsItems,AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId,AdPosition,AdPositionType,AdRegionId,
+                    AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF,Gclid,SmartClickId,decodedServerTimestamp,Cost,Clicks,Impressions,StatDate
+                    FROM CHdatabase.visits
+                    ALL LEFT JOIN CHdatabase.adstat USING {dimension})
+                    ALL INNER JOIN CHdatabase.hits
+                    USING idVisit"""
+                is_ad = True
                 break
 
         #Формируем массив с count() для каждого параметра
