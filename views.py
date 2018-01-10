@@ -7,6 +7,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 import pprint
 import re
+from datetime import datetime, timedelta
 
 def MetricCounts(metrics, headers):
     metric_counts = []
@@ -95,11 +96,11 @@ def MetricCounts(metrics, headers):
             continue
         if 'bounce_rate'==i:
             metric_counts.append(
-                "if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2)) as {metric}".format(
+                "if(uniq(idVisit)=0,0,floor((uniqIf(idVisit,visitDuration=0)*100/uniq(idVisit)),2)) as {metric}".format(
                     metric=i))
             continue
         if 'bounce_count'==i:
-            metric_counts.append("CAST(sum(visitDuration=0),'Int') as {metric}".format(metric=i))
+            metric_counts.append("CAST((uniqIf(idVisit,visitDuration=0),'Int') as {metric}".format(metric=i))
             continue
         if 'calculated_metric' in i:
             calc_metr = json.loads(requests.get(
@@ -142,7 +143,7 @@ def MetricCounts(metrics, headers):
             metric_counts.append("CAST(count(*),'Int') as nb_actions")
         if i == "nb_visitors":
             metric_counts.append("CAST(uniq(visitorId),'Int') as nb_visitors")
-    return  ','.join(metric_counts)
+    return metric_counts
 @csrf_exempt
 def CHapi(request):
     def datesdicts(array_dates, dim,dim_with_alias,table,date_filt,updm):
@@ -155,7 +156,8 @@ def CHapi(request):
                                                       metric_counts=metric_counts,
                                                       filt=filt, limit=limit,
                                                       sort_order=sort_order,
-                                                      table=table, date_filt=date_filt)
+                                                      table=table.format(dimension=dim), date_filt=date_filt)
+
         all_labeldicts = json.loads(get_clickhouse_data(q_all, 'http://85.143.172.199:8123'))['data']
         all_label = []
         sorted_array = array_dates[0]
@@ -184,8 +186,10 @@ def CHapi(request):
             if len(array_dates[array_num]) > len(array_dates[max_len]):
                 max_len = array_num
         return(max_len)
-    def RecStats(n,i,updimensions,table,up_dim_info):
+    def RecStats(n,i,updimensions,table,up_dim_info,using):
         """Рекурсивный метод для добавления вложенных структур в stats"""
+        if dimensionslist_with_segments[n + 1] not in list_of_adstat_par and is_ad:
+            return []
         #Добавляем фильтры
         try:
             updimensions.pop(n)
@@ -196,7 +200,7 @@ def CHapi(request):
         try:
             if dimensionslist_with_segments[n] in time_dimensions_dict.keys():
                 if type(i[dimensionslist_with_segments[n]]) is int:
-                    print('hui')
+
                     updimensions.append(
                         "{updimension}={updimension_val}".format(updimension=time_dimensions_dict[dimensionslist_with_segments[n]],
                                                                  updimension_val=i[dimensionslist_with_segments[n]]))
@@ -340,8 +344,33 @@ def CHapi(request):
                 sort_column_in_query = dimension
             else:
                 sort_column_in_query = sort_column
-            for date in period:
-                q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
+            using=using+','+dimension#поля, по которым необходимо join-ить таблицы, если запрошены параметры статистики
+            if attribution_model == 'first_transition':
+                for date in period:
+                    date0 = (datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
+                    q = '''SELECT {dimension_with_alias},{sum_metric_string}
+                               FROM (SELECT visitorId,any({dimension_with_alias}) as {dimension_with_alias} FROM {table}
+                               WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                               AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
+                               ALL INNER JOIN
+                               (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                               USING visitorId
+                               GROUP BY {dimension}
+                               ORDER BY {sort_column} {sort_order}
+                               {limit}
+                                                  FORMAT JSON
+                                                  '''.format(dimension_with_alias=dimensionslist_with_segments_and_aliases[n+1], date0=str(date0),
+                                                             metric_counts=metric_counts,dimension=dimension,
+                                                             sum_metric_string=sum_metric_string,
+                                                             date1=date['date1'], sort_column=sort_column_in_query,
+                                                             date2=date['date2'], filt=filt, sort_order=sort_order,
+                                                             limit=limit,
+                                                             table=table.format(dimension=using),
+                                                             date_field=date_field)
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+            else:
+                for date in period:
+                    q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
                                                                     WHERE 1 {filt} AND {updimensions} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                                                     GROUP BY {dimension}
                                                                     ORDER BY {sort_column} {sort_order}
@@ -351,10 +380,10 @@ def CHapi(request):
                                                                                metric_counts=metric_counts,
                                                                                date1=date['date1'],
                                                                                date2=date['date2'], filt=filt,
-                                                                               having=having, table=table,
+                                                                               having=having, table=table.format(dimension=using),
                                                                                date_field=date_field)
-                print(q)
-                array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                    print(q)
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm)
             for i2 in array_dates[MaxLenNum(array_dates)]:
                 stat_dict = {'label': i2[dimensionslist_with_segments[n + 1]],
@@ -376,37 +405,77 @@ def CHapi(request):
                 stat_dict['dates'] = dates
                 if n != len(dimensionslist_with_segments) - 2:
                     up_dim=stat_dict.copy()#Передаем словарь с информацией о вернем уровне "Все файлы"
-                    stat_dict['sub'] = RecStats(n + 1, i2, updimensions, table,up_dim)
+                    stat_dict['sub'] = RecStats(n + 1, i2, updimensions, table,up_dim,using)
                 sub.append(stat_dict)
         return sub
     def get_clickhouse_data(query,host,connection_timeout=1500):
         """Метод для обращения к базе данных CH"""
         r=requests.post(host,params={'query':query},timeout=connection_timeout)
         return r.text
-    def AddCounts(period,dimension_counts,filt,sort_order,table,date_filt):
+    def AddCounts(period,dimension_counts,filt,sort_order,table,date_filt,):
         """Добавление ключа Counts в ответ"""
-
-        q = ''' SELECT {dimension_counts}
+        a={}
+        for dim_num in range(len(dimensionslist)):
+            if dimensionslist[dim_num] not in list_of_adstat_par:
+                tab='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
+            else:
+                tab=table
+            if attribution_model != 'first_transition':
+                q = ''' SELECT {dimension_counts}
                      FROM {table}
                      WHERE 1 {filt} AND {date_filt}
                      ORDER BY NULL {sort_order}
                      FORMAT JSON
-                    '''.format(date1=period[0]['date1'], date2=period[0]['date2'], dimension_counts=dimension_counts, filt=filt,
-                               sort_order=sort_order,table=table,date_filt=date_filt)
-        print(q)
+                    '''.format(date1=period[0]['date1'], date2=period[0]['date2'], dimension_counts=dimension_counts[dim_num], filt=filt,
+                               sort_order=sort_order,table=tab.format(dimension=dimensionslist[dim_num]),date_filt=date_filt)
+                print(q)
+            else:
+                date0 = (datetime.strptime(period[0]['date1'], '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
+                q = '''SELECT {dimension_counts}
+                                    FROM (SELECT visitorId,any({dimension_with_alias}) as {dimension_with_alias} FROM {table}
+                                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                                    AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
+                                    ALL INNER JOIN
+                                    (SELECT visitorId FROM {table} WHERE 1 {filt}  AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                                    USING visitorId
+                                    ORDER BY NULL {sort_order}
+                                                       FORMAT JSON
+                                                       '''.format(dimension_with_alias=dimensionslist[dim_num],
+                                                                  date0=str(date0),dimension_counts=dimension_counts[dim_num],
+                                                                  date1=period[0]['date1'],
+                                                                  date2=period[0]['date2'], filt=filt, sort_order=sort_order,
+                                                                  limit=limit,
+                                                                  table=tab.format(dimension=dimensionslist[dim_num]),
+                                                                  date_field=date_field)
+
+            try:
+                a.update(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0])
+            except:
+                a.update({'h'+dimensionslist[dim_num]:0})
         b = {}
         try:
             # Объеденяем словарь с датами со словарем  вернувшихся значений каждого из запрошенных параметров
-            a = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
             #изменяем значения показателей на целочисленный тип
             for key in a.keys():
                 b[key[1:]]=a[key]
         except:
             b=dict.fromkeys(dimensionslist,0)
         return b
-    def AddMetricSums(period,metric_counts,filt,metrics,sort_order,table):
+    def AddMetricSums(period,metric_counts_list,filt,metrics,sort_order,table):
         """Добавление ключа metric_sums в ответ"""
         dates = []
+        metric_counts_visits=[]
+        metric_counts_stat=[]
+        a={}
+        b={}
+        #разделлим metric_counts для визитов и для рекламной статистики
+        for metr in metric_counts_list:
+            if 'clicks' in metr or 'impressions' in metr or 'cost' in metr:
+                metric_counts_stat.append(metr)
+            else:
+                metric_counts_visits.append(metr)
+        metric_counts_stat=','.join(metric_counts_stat)
+        metric_counts_visits = ','.join(metric_counts_visits)
         for date in period:
             # Запрос на получение сумм показателей без фильтра
             q_total = ''' SELECT {metric_counts}
@@ -415,7 +484,7 @@ def CHapi(request):
                     ORDER BY NULL {sort_order}
                     FORMAT JSON
                    '''.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,
-                              sort_order=sort_order,table=table,date_field=date_field)
+                              sort_order=sort_order,table=table.format(dimension=dimensionslist[0]),date_field=date_field)
 
             # С фильтром
             q = ''' SELECT {metric_counts}
@@ -424,9 +493,40 @@ def CHapi(request):
                                 ORDER BY NULL {sort_order}
                                 FORMAT JSON
                                '''.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,
-                                          filt=filt, sort_order=sort_order,table=table,date_field=date_field)
+                                          filt=filt, sort_order=sort_order,table=table.format(
+                                                                              dimension=dimensionslist[0]),date_field=date_field)
+            """q_total_stat = ''' SELECT {metric_counts}
+                                                    FROM {table}
+                                                    WHERE {date_field} BETWEEN '{date1}' AND '{date2}'
+                                                    ORDER BY NULL {sort_order}
+                                                    FORMAT JSON
+                                                   '''.format(date1=date['date1'], date2=date['date2'],
+                                                              metric_counts=metric_counts_stat,
+                                                              sort_order=sort_order,
+                                                              table=table.format(dimension=dimensionslist[0]),
+                                                              date_field=date_field)
+            print(q_total_stat)
+            # С фильтром
+            q_stat = ''' SELECT {metric_counts}
+                                                                FROM {table}
+                                                                WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                                                                ORDER BY NULL {sort_order}
+                                                                FORMAT JSON
+                                                               '''.format(date1=date['date1'], date2=date['date2'],
+                                                                          metric_counts=metric_counts_stat,
+                                                                          filt=filt, sort_order=sort_order,
+                                                                          table=table.format(
+                                                                              dimension=dimensionslist[0]),
+                                                                          date_field=date_field)"""
             #Проверка на существование записей, если их нет, возвращаем нули
             try:
+                """if metric_counts_visits != "":
+                    a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
+                    b = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+                #Если запрошены показатели рекламной статистики то считаем для них metric_sums по таблице с статистикой
+                if metric_counts_stat != "":
+                    a.update(json.loads(get_clickhouse_data(q_total_stat, 'http://85.143.172.199:8123'))['data'][0])
+                    b.update(json.loads(get_clickhouse_data(q_stat, 'http://85.143.172.199:8123'))['data'][0])"""
                 a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
                 b = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
                 # Создаем словарь, ключи которого это элементы списка metrics
@@ -475,6 +575,9 @@ def CHapi(request):
     def AddStats2(dim,dim_with_alias, metric_counts, filt, limit, period, metrics, table,date_filt):
         """Добавление ключа stats в ответ"""
         stats = []
+
+        if dim[0] not in list_of_adstat_par and is_ad:
+            return stats
         #Определяем, есть ли вначале dimensions группа сегментов
         if type(dim[0])==list:
             stats.append(AddMetricSumsWithFilt(period, metric_counts, filt, metrics, sort_order, table))
@@ -548,19 +651,46 @@ def CHapi(request):
                 sort_column_in_query=dim[0]
             else:
                 sort_column_in_query=sort_column
-            for date in period:
-                q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
-                                   WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
-                                   GROUP BY {dimension}
-                                   ORDER BY {sort_column} {sort_order}
-                                   {limit}
-                                   FORMAT JSON
-                                   '''.format(dimension_with_alias=dim_with_alias[0],dimension=dim[0], metric_counts=metric_counts,
-                                              date1=date['date1'],sort_column=sort_column_in_query,
-                                              date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
-                                              table=table, date_field=date_field)
-                print(q)
-                array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+            using=dim[0]
+            #если указана модель аттрибуции показатели рассчитываются для первого визита
+
+            if attribution_model=='first_transition':
+
+                for date in period:
+                    date0=(datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
+                    q = '''SELECT {dimension_with_alias},{sum_metric_string}
+                    FROM (SELECT visitorId,any({dimension_with_alias}) as {dimension_with_alias} FROM {table}
+                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                    AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
+                    ALL INNER JOIN
+                    (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                    USING visitorId
+                    GROUP BY {dimension_with_alias}
+                    ORDER BY {sort_column} {sort_order}
+                    {limit}
+                                       FORMAT JSON
+                                       '''.format(dimension_with_alias=dim_with_alias[0],date0=str(date0),
+                                                  metric_counts=metric_counts,sum_metric_string=sum_metric_string,
+                                                  date1=date['date1'],sort_column=sort_column_in_query,
+                                                  date2=date['date2'], filt=filt,sort_order=sort_order,limit=limit,
+                                                  table=table.format(dimension=dim[0]), date_field=date_field)
+                    print(q)
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+
+            else:
+                for date in period:
+                    q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
+                                       WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                                       GROUP BY {dimension}
+                                       ORDER BY {sort_column} {sort_order}
+                                       {limit}
+                                       FORMAT JSON
+                                       '''.format(dimension_with_alias=dim_with_alias[0],dimension=dim[0], metric_counts=metric_counts,
+                                                  date1=date['date1'],sort_column=sort_column_in_query,
+                                                  date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
+                                                  table=table.format(dimension=dim[0]), date_field=date_field)
+
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1)
 
                 #определим самый большой список в array_dates
@@ -580,6 +710,7 @@ def CHapi(request):
                             metrics_dict[j] = dates_dicts[m][i[dim[0]]][j]
                         except:
                             metrics_dict[j]=0
+
                     dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
 
                 stat_dict['dates'] = dates
@@ -599,7 +730,7 @@ def CHapi(request):
                     except:
                         pass
                     up_dim=stat_dict.copy()#Передаем словарь с информацией о вернем уровне "Все файлы"
-                    stat_dict['sub'] = RecStats(0, i, updimensions, table,up_dim)
+                    stat_dict['sub'] = RecStats(0, i, updimensions, table,up_dim,dim[0])
                 stats.append(stat_dict)
         #Для групп сегментов
         for num in seg_label_list:
@@ -658,38 +789,6 @@ def CHapi(request):
                 stats.append(stat_dict)
                 counter+=1
         return stats
-    def OldFilterParse(filt_dict):
-        """Метод для перевода словаря global_filter в строку для sql запроса"""
-        filt=[]
-        having=[]
-        for i in filt_dict:
-            sub_filt=[]
-            for j in i['filters']:
-                Not=""
-                if j['not']=='true' or j['not']=='True':
-                    Not="NOT"
-                if j['filter_operator'] == 'match':
-                    filt_str = " {Not} {filter_operator}({parameter},'{expressions}') ".format(parameter=j['parameter']
-                                                                                           , Not=Not, filter_operator=j['filter_operator'],
-                                                                                          expressions=j['expressions'][0])
-                else:
-                    if j['filter_operator']=="IN":
-                        expressions='('+','.join(j['expressions'])+')'
-                    else:
-                        expressions=j['expressions'][0]
-                        if type(expressions)==str:
-                            expressions="'"+expressions+"'"
-
-                    filt_str=' {Not}{parameter} {filter_operator} {expressions} '.format(parameter=j['parameter']
-                                                                   ,Not=Not,filter_operator=j['filter_operator'],expressions=expressions)
-                sub_filt.append(filt_str)
-            sub_filt=' ('+i['global_filter_operator'].join(sub_filt)+') '
-            filt.append(sub_filt)
-
-        #filt=filt_dict['operator'].join(filt)
-        filt='AND'.join(filt)
-
-        return filt
     def FilterParse(filt_string):
         """Метод для перевода  global_filter в строку для sql запроса"""
         #filt_string=filt_string.replace(',',' OR ')
@@ -768,7 +867,6 @@ def CHapi(request):
                 lang='eng'
         except:
             lang = "ru"
-
         #сортировка по переданному показателю
         try:
             sort_column = json.loads(request.body.decode('utf-8'))['sort_column']
@@ -823,6 +921,9 @@ def CHapi(request):
             dimensionslist_with_segments_and_aliases.append(d)
 
         metrics = json.loads(request.body.decode('utf-8'))['metrics']
+        # строка  "sum(metric1),sum(metric2)..."
+        sum_metric_string=','.join(['sum('+i+') as '+i for i in metrics])
+
         #если в запросе не указан сдвиг, зададим его равным нулю
         try:
             offset = json.loads(request.body.decode('utf-8'))['offset']
@@ -847,38 +948,44 @@ def CHapi(request):
             search_pattern=json.loads(request.body.decode('utf-8'))['search_pattern']
         except:
             search_pattern=""
-
-        #если список dimensionslist пуст, значит были переданы только сегменты
-        """try:
-            #Проверка на пренадленость параметров к таблице.
-            if dimensionslist[0] in ['idSite', 'campaignContent', 'campaignKeyword', 'campaignMedium', 'campaignName', 'campaignSource', 'StatDate', 'Impressions', 'Clicks', 'Cost']:
-                table = 'CHdatabase.visits ALL INNER JOIN CHdatabase.adstat USING AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId, AdPosition, AdPositionType, AdRegionId,AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF'
-                date_field='serverDate'
-            else:
-                table = 'CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit'
-                date_field = 'serverDate'
+        try:
+            attribution_model=json.loads(request.body.decode('utf-8'))['attribution_model']
         except:
-            table = 'CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
-            date_field = 'serverDate'"""
+            attribution_model=""
+        try:
+            attribution_lookup_period=json.loads(request.body.decode('utf-8'))['attribution_lookup_period']
+        except:
+            attribution_lookup_period=""
+
         date_field = 'serverDate'
-        table="""(SELECT
-        idSite,idVisit,visitIp,visitorId,goalConversions,siteCurrency,siteCurrencySymbol,serverDate,visitServerHour,lastActionTimestamp,
-        lastActionDateTime,userId,visitorType,visitorTypeIcon,visitConverted,visitConvertedIcon,visitCount,firstActionTimestamp,
-        visitEcommerceStatus,visitEcommerceStatusIcon,daysSinceFirstVisit,daysSinceLastEcommerceOrder,visitDuration,visitDurationPretty,
-        searches,actions,interactions,referrerType,referrerTypeName,referrerName,referrerKeyword,referrerKeywordPosition,referrerUrl,
-        referrerSearchEngineUrl,referrerSearchEngineIcon,languageCode,language,deviceType,deviceTypeIcon,deviceBrand,deviceModel,operatingSystem,
-        operatingSystemName,operatingSystemIcon,operatingSystemCode,operatingSystemVersion,browserFamily,browserFamilyDescription,browser,browserName,
-        browserIcon,browserCode,browserVersion,events,continent,continentCode,country,countryCode,countryFlag,region,regionCode,city,location,latitude,
-        longitude,visitLocalTime,visitLocalHour,daysSinceLastVisit,customVariables,resolution,plugins,pluginsIcons,provider,providerName,providerUrl,dimension1,
-        campaignId,campaignContent,campaignKeyword,campaignMedium,campaignName,campaignSource,serverTimestamp,serverTimePretty,serverDatePretty,
-        serverDatePrettyFirstAction,serverTimePrettyFirstAction,totalEcommerceRevenue,totalEcommerceConversions,totalEcommerceItems,totalAbandonedCartsRevenue,
-        totalAbandonedCarts,totalAbandonedCartsItems,AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId,AdPosition,AdPositionType,AdRegionId,
-        AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF,Gclid,SmartClickId,decodedServerTimestamp,Cost,Clicks,Impressions,StatDate
-        FROM CHdatabase.visits
-        ALL LEFT JOIN CHdatabase.adstat USING
-        idSite, AdCampaignId, AdBannerId, AdChannelId, AdDeviceType, AdGroupId, AdKeywordId, AdPosition, AdPositionType, AdRegionId, AdRetargetindId, AdPlacement, AdTargetId, AdvertisingSystem, DRF, campaignContent, campaignKeyword, campaignMedium, campaignName, campaignSource)
-        ALL INNER JOIN CHdatabase.hits
-        USING idVisit"""
+        table = 'CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
+        list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
+                       'AdPosition', 'AdPositionType', 'AdRegionId', 'AdRetargetindId', 'AdPlacement', 'AdTargetId', 'AdvertisingSystem', 'DRF', 'campaignContent',
+                       'campaignKeyword', 'campaignMedium', 'campaignName', 'campaignSource']
+        is_ad=False
+        #Выбираем таблицу
+        for (dim,metr) in zip(dimensionslist,metrics):
+            if dim in list_of_adstat_par or metr in ['cost','impressions','clicks']:
+                table="""(SELECT
+                idSite,idVisit,visitIp,visitorId,goalConversions,siteCurrency,siteCurrencySymbol,serverDate,visitServerHour,lastActionTimestamp,
+                lastActionDateTime,userId,visitorType,visitorTypeIcon,visitConverted,visitConvertedIcon,visitCount,firstActionTimestamp,
+                visitEcommerceStatus,visitEcommerceStatusIcon,daysSinceFirstVisit,daysSinceLastEcommerceOrder,visitDuration,visitDurationPretty,
+                searches,actions,interactions,referrerType,referrerTypeName,referrerName,referrerKeyword,referrerKeywordPosition,referrerUrl,
+                referrerSearchEngineUrl,referrerSearchEngineIcon,languageCode,language,deviceType,deviceTypeIcon,deviceBrand,deviceModel,operatingSystem,
+                operatingSystemName,operatingSystemIcon,operatingSystemCode,operatingSystemVersion,browserFamily,browserFamilyDescription,browser,browserName,
+                browserIcon,browserCode,browserVersion,events,continent,continentCode,country,countryCode,countryFlag,region,regionCode,city,location,latitude,
+                longitude,visitLocalTime,visitLocalHour,daysSinceLastVisit,customVariables,resolution,plugins,pluginsIcons,provider,providerName,providerUrl,dimension1,
+                campaignId,campaignContent,campaignKeyword,campaignMedium,campaignName,campaignSource,serverTimestamp,serverTimePretty,serverDatePretty,
+                serverDatePrettyFirstAction,serverTimePrettyFirstAction,totalEcommerceRevenue,totalEcommerceConversions,totalEcommerceItems,totalAbandonedCartsRevenue,
+                totalAbandonedCarts,totalAbandonedCartsItems,AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId,AdPosition,AdPositionType,AdRegionId,
+                AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF,Gclid,SmartClickId,decodedServerTimestamp,Cost,Clicks,Impressions,StatDate
+                FROM CHdatabase.visits
+                ALL INNER JOIN CHdatabase.adstat USING {dimension})
+                ALL INNER JOIN CHdatabase.hits
+                USING idVisit"""
+                is_ad=True
+                break
+
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
         for i in dimensionslist:
@@ -886,15 +993,10 @@ def CHapi(request):
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension_alias}".format(dimension=time_dimensions_dict[i],dimension_alias=i))
             else:
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
-        dimension_counts=','.join(dimension_counts)
+
         # ФОрмируем массив с запросом каждого показателя в SQL
-        metric_counts=MetricCounts(metrics,headers)
-        #Заполнение таблицы с рекламной статистикой
-        load_query="INSERT INTO CHdatabase.adstat VALUES "
-        for part in json.loads(requests.get('https://s.analitika.online/api/ad_stat/',headers=headers).content.decode('utf-8'))['results']:
-            query=load_query+"("+str(list(part.values()))[1:len(str(list(part.values())))-1]+")"
-            query=query.replace("None","'none'")
-            #get_clickhouse_data(query, 'http://85.143.172.199:8123')
+        metric_counts_list=MetricCounts(metrics,headers)
+        metric_counts=','.join(metric_counts_list)
 
         #Фильтр по всем датам
         date_filt = []
@@ -909,7 +1011,7 @@ def CHapi(request):
         resp['counts']=AddCounts(period,dimension_counts,filt,sort_order,table,date_filt)
         # Добавляем в выходной словарь параметр metric_sums
         resp['metric_sums']={}
-        resp['metric_sums']['dates'] = AddMetricSums(period,metric_counts,filt,metrics,sort_order,table)
+        resp['metric_sums']['dates'] = AddMetricSums(period,metric_counts_list,filt,metrics,sort_order,table)
         stats=AddStats2(dimensionslist_with_segments,dimensionslist_with_segments_and_aliases,metric_counts,filt,limit,period,metrics,table,date_filt)
         # Добавляем stats
         resp['stats']=stats
@@ -1018,37 +1120,55 @@ def diagram_stat(request):
         return r.text
     def AddCounts(date1,date2,dimension_counts,filt,sort_order,table):
         """Добавление ключа Counts в ответ"""
-
-        q = ''' SELECT {dimension_counts}
+        a={}
+        for dim_num in range(len(dimensionslist)):
+            if dimensionslist[dim_num] not in list_of_adstat_par:
+                tab='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
+            else:
+                tab=table
+            q = ''' SELECT {dimension_counts}
                      FROM {table}
                      WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                      ORDER BY NULL {sort_order}
                      FORMAT JSON
-                    '''.format(date1=date1, date2=date2, dimension_counts=dimension_counts, filt=filt,
-                               sort_order=sort_order,table=table,date_field=date_field)
-        print(q)
+                    '''.format(date1=date1, date2=date2, dimension_counts=dimension_counts[dim_num], filt=filt,
+                               sort_order=sort_order,table=tab.format(dimension=dimensionslist[dim_num]),date_field=date_field)
+
+            try:
+                a.update(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0])
+            except:
+                a.update({'h'+dimensionslist[dim_num]:0})
         b = {}
         try:
             # Объеденяем словарь с датами со словарем  вернувшихся значений каждого из запрошенных параметров
-            a = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
             #изменяем значения показателей на целочисленный тип
             for key in a.keys():
                 b[key[1:]]=a[key]
         except:
             b=dict.fromkeys(dimensionslist,0)
         return b
-    def AddMetricSums(date1,date2,metric_counts,filt,metrics,sort_order,table):
+    def AddMetricSums(date1,date2,metric_counts_list,filt,metrics,sort_order,table):
         """Добавление ключа metric_sums в ответ"""
         dates = []
-
+        metric_counts_visits = []
+        metric_counts_stat = []
+        a = {}
+        b = {}
+        for metr in metric_counts_list:
+            if 'clicks' in metr or 'impressions' in metr or 'cost' in metr:
+                metric_counts_stat.append(metr)
+            else:
+                metric_counts_visits.append(metr)
+        metric_counts_stat = ','.join(metric_counts_stat)
+        metric_counts_visits = ','.join(metric_counts_visits)
         # Запрос на получение сумм показателей без фильтра
         q_total = ''' SELECT {metric_counts}
                     FROM {table}
                     WHERE {date_field} BETWEEN '{date1}' AND '{date2}'
                     ORDER BY NULL {sort_order}
                     FORMAT JSON
-                   '''.format(date1=date1, date2=date2, metric_counts=metric_counts,
-                              sort_order=sort_order,table=table,date_field=date_field)
+                   '''.format(date1=date1, date2=date2, metric_counts=metric_counts_visits,
+                              sort_order=sort_order,table='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit',date_field=date_field)
 
         # С фильтром
         q = ''' SELECT {metric_counts}
@@ -1056,12 +1176,40 @@ def diagram_stat(request):
                                 WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                 ORDER BY NULL {sort_order}
                                 FORMAT JSON
-                               '''.format(date1=date1, date2=date2, metric_counts=metric_counts,
-                                          filt=filt, sort_order=sort_order,table=table,date_field=date_field)
+                               '''.format(date1=date1, date2=date2, metric_counts=metric_counts_visits,
+                                          filt=filt, sort_order=sort_order,table='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit',date_field=date_field)
+        q_total_stat = ''' SELECT {metric_counts}
+                                                           FROM {table}
+                                                           WHERE {date_field} BETWEEN '{date1}' AND '{date2}'
+                                                           ORDER BY NULL {sort_order}
+                                                           FORMAT JSON
+                                                          '''.format(date1=date1, date2=date2,
+                                                                     metric_counts=metric_counts_stat,
+                                                                     sort_order=sort_order,
+                                                                     table=table.format(dimension=dimensionslist[0]),
+                                                                     date_field=date_field)
+        # С фильтром
+        q_stat = ''' SELECT {metric_counts}
+                                                                       FROM {table}
+                                                                       WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                                                                       ORDER BY NULL {sort_order}
+                                                                       FORMAT JSON
+                                                                      '''.format(date1=date1,
+                                                                                 date2=date2,
+                                                                                 metric_counts=metric_counts_stat,
+                                                                                 filt=filt, sort_order=sort_order,
+                                                                                 table=table.format(
+                                                                                     dimension=dimensionslist[0]),
+                                                                                 date_field=date_field)
             #Проверка на существование записей, если их нет, возвращаем нули
         try:
-            a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
-            b = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+            if metric_counts_visits != "":
+                a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
+                b = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+            # Если запрошены показатели рекламной статистики то считаем для них metric_sums по таблице с статистикой
+            if metric_counts_stat != "":
+                a.update(json.loads(get_clickhouse_data(q_total_stat, 'http://85.143.172.199:8123'))['data'][0])
+                b.update(json.loads(get_clickhouse_data(q_stat, 'http://85.143.172.199:8123'))['data'][0])
                 # Создаем словарь, ключи которого это элементы списка metrics
             metric_dict = dict.fromkeys(metrics)
                 # Заполняем этот словарь полученными из базы данными
@@ -1116,7 +1264,7 @@ def diagram_stat(request):
         ORDER BY {sort_column} {sort_order}
         {limit}
         FORMAT JSON
-        """.format(dimensions_with_aliases=','.join(dim_with_aliases),date1=date1,date2=date2,filt=filt,date_field=date_field,table=table,limit=limit,sort_column=sort_column,sort_order=sort_order,metric_counts=metric_counts,dimensions=','.join(dimensionslist))
+        """.format(dimensions_with_aliases=','.join(dim_with_aliases),date1=date1,date2=date2,filt=filt,date_field=date_field,table=table.format(dimension=','.join(dimensionslist)),limit=limit,sort_column=sort_column,sort_order=sort_order,metric_counts=metric_counts,dimensions=','.join(dimensionslist))
         print(q)
         stats=json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data']
         #Если показатеь один, обрабатываем ошибку
@@ -1238,8 +1386,10 @@ def diagram_stat(request):
         end_filt=end_filt.replace(';',' AND ')
         end_filt = end_filt.replace('?', ',')
         return end_filt.replace('date','toDate(serverTimestamp)').replace('month_code','toMonth(toDate(serverTimestamp))').replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))")\
-                .replace('day_of_week',"transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')")\
-            .replace('year',"toYear(toDate(serverTimestamp))").replace('minute',"toMinute(toDateTime(serverTimestamp))").replace('second',"toSecond(toDateTime(serverTimestamp))")
+                .replace('day_of_week',"dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
+                        lang=lang))\
+            .replace('year',"toYear(toDate(serverTimestamp))").replace('minute',"toMinute(toDateTime(serverTimestamp))").replace('second',"toSecond(toDateTime(serverTimestamp))")\
+            .replace('month',"dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang))
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
@@ -1257,13 +1407,29 @@ def diagram_stat(request):
             sort_column = json.loads(request.body.decode('utf-8'))['sort_column']
         except:
             sort_column=dimensionslist_with_segments[0]
+        try:
+            lang = json.loads(request.body.decode('utf-8'))['lang']
+            if lang == "":
+                lang='ru'
+            if lang == "en":
+                lang='eng'
+        except:
+            lang = "ru"
         dimensionslist = []
         dimensionslist_with_aliases=[]
         #Создание списка параметров без сегментов
         time_dimensions_dict = {}
         for d in dimensionslist_with_segments:
-            if 'segment' not in d and type(d)!=list:
+            if 'segment' not in d and d != list:
                 dimensionslist.append(d)
+                if d == 'month':
+                    time_dimensions_dict[
+                        d] = "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(
+                        lang=lang)
+                    dimensionslist_with_aliases.append(
+                        "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp)))) as month".format(
+                            lang=lang))
+                    continue
                 if d == 'second':
                     time_dimensions_dict[d] = "toSecond(toDateTime(serverTimestamp))"
                     dimensionslist_with_aliases.append("toSecond(toDateTime(serverTimestamp)) as second")
@@ -1276,10 +1442,10 @@ def diagram_stat(request):
                     time_dimensions_dict[d] = "toYear(toDate(serverTimestamp))"
                     dimensionslist_with_aliases.append("toYear(toDate(serverTimestamp)) as year")
                     continue
-                if d=='day_of_week_code':
-                    time_dimensions_dict[d]="toDayOfWeek(toDate(serverTimestamp))"
+                if d == 'day_of_week_code':
+                    time_dimensions_dict[d] = "toDayOfWeek(toDate(serverTimestamp))"
                     dimensionslist_with_aliases.append(
-                    "toDayOfWeek(toDate(serverTimestamp)) as day_of_week_code")
+                        "toDayOfWeek(toDate(serverTimestamp)) as day_of_week_code")
                     continue
                 if d == 'month_code':
                     time_dimensions_dict[d] = "toMonth(toDate(serverTimestamp))"
@@ -1291,10 +1457,13 @@ def diagram_stat(request):
                     dimensionslist_with_aliases.append(
                         "toDate(serverTimestamp) as date")
                     continue
-                if d=='day_of_week':
-                    time_dimensions_dict[d] = "transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно')"
+                if d == 'day_of_week':
+                    time_dimensions_dict[
+                        d] = "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
+                        lang=lang)
                     dimensionslist_with_aliases.append(
-                        "transform(toDayOfWeek(toDate(serverTimestamp)),[1,2,3,4,5,6,7],['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'],'Неизвестно') as day_of_week")
+                        "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp)))) as day_of_week".format(
+                            lang=lang))
                     continue
                 dimensionslist_with_aliases.append(d)
 
@@ -1333,19 +1502,35 @@ def diagram_stat(request):
         except:
             search_pattern=""
         #если список dimensionslist пуст, значит были переданы только сегменты
-        try:
-            #Проверка на пренадленость параметров к таблице.
-            if dimensionslist[0] in ['adclient','campaign','stat_date','banner',
-                                     'keyword','shows','clicks','spend','utm_source',
-                                     'utm_medium','utm_campaign','utm_term','utm_content']:
-                table = 'CHdatabase.adstat'
-                date_field='stat_date'
-            else:
-                table = 'CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit'
-                date_field = 'serverDate'
-        except:
-            table = 'CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
-            date_field = 'serverDate'
+
+        date_field = 'serverDate'
+        table = 'CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
+        list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
+                       'AdPosition', 'AdPositionType', 'AdRegionId', 'AdRetargetindId', 'AdPlacement', 'AdTargetId', 'AdvertisingSystem', 'DRF', 'campaignContent',
+                       'campaignKeyword', 'campaignMedium', 'campaignName', 'campaignSource']
+        is_ad=False
+        #Выбираем таблицу
+        for (dim,metr) in zip(dimensionslist,metrics):
+            if dim in list_of_adstat_par or metr in ['cost','impressions','clicks']:
+                table="""(SELECT
+                idSite,idVisit,visitIp,visitorId,goalConversions,siteCurrency,siteCurrencySymbol,serverDate,visitServerHour,lastActionTimestamp,
+                lastActionDateTime,userId,visitorType,visitorTypeIcon,visitConverted,visitConvertedIcon,visitCount,firstActionTimestamp,
+                visitEcommerceStatus,visitEcommerceStatusIcon,daysSinceFirstVisit,daysSinceLastEcommerceOrder,visitDuration,visitDurationPretty,
+                searches,actions,interactions,referrerType,referrerTypeName,referrerName,referrerKeyword,referrerKeywordPosition,referrerUrl,
+                referrerSearchEngineUrl,referrerSearchEngineIcon,languageCode,language,deviceType,deviceTypeIcon,deviceBrand,deviceModel,operatingSystem,
+                operatingSystemName,operatingSystemIcon,operatingSystemCode,operatingSystemVersion,browserFamily,browserFamilyDescription,browser,browserName,
+                browserIcon,browserCode,browserVersion,events,continent,continentCode,country,countryCode,countryFlag,region,regionCode,city,location,latitude,
+                longitude,visitLocalTime,visitLocalHour,daysSinceLastVisit,customVariables,resolution,plugins,pluginsIcons,provider,providerName,providerUrl,dimension1,
+                campaignId,campaignContent,campaignKeyword,campaignMedium,campaignName,campaignSource,serverTimestamp,serverTimePretty,serverDatePretty,
+                serverDatePrettyFirstAction,serverTimePrettyFirstAction,totalEcommerceRevenue,totalEcommerceConversions,totalEcommerceItems,totalAbandonedCartsRevenue,
+                totalAbandonedCarts,totalAbandonedCartsItems,AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId,AdPosition,AdPositionType,AdRegionId,
+                AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF,Gclid,SmartClickId,decodedServerTimestamp,Cost,Clicks,Impressions,StatDate
+                FROM CHdatabase.visits
+                ALL INNER JOIN CHdatabase.adstat USING {dimension})
+                ALL INNER JOIN CHdatabase.hits
+                USING idVisit"""
+                is_ad=True
+                break
 
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
@@ -1354,10 +1539,11 @@ def diagram_stat(request):
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension_alias}".format(dimension=time_dimensions_dict[i],dimension_alias=i))
             else:
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
-        dimension_counts=','.join(dimension_counts)
+
 
         # ФОрмируем массив с запросом каждого показателя в SQL
-        metric_counts=MetricCounts(metrics,headers)
+        metric_counts_list = MetricCounts(metrics, headers)
+        metric_counts = ','.join(metric_counts_list)
         #Добавляем в выходной словарь параметр counts
         resp={}#Выходной словарь
         resp['counts'] = {}
@@ -1365,7 +1551,7 @@ def diagram_stat(request):
 
         # Добавляем в выходной словарь параметр metric_sums
         resp['metric_sums']={}
-        resp['metric_sums']['dates'] = AddMetricSums(date1,date2,metric_counts,filt,metrics,sort_order,table)
+        resp['metric_sums']['dates'] = AddMetricSums(date1,date2,metric_counts_list,filt,metrics,sort_order,table)
         stats=AddStats2(dimensionslist,dimensionslist_with_aliases,metric_counts,filt,limit,having,date1,date2,metrics,table)
         # Добавляем stats
         resp['stats']=stats
