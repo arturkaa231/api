@@ -922,7 +922,7 @@ def CHapi(request):
 
         metrics = json.loads(request.body.decode('utf-8'))['metrics']
         # строка  "sum(metric1),sum(metric2)..."
-        sum_metric_string=','.join(['sum('+i+') as '+i for i in metrics])
+        sum_metric_string=','.join(["CAST(sum("+i+"),'Int') as "+i for i in metrics])
 
         #если в запросе не указан сдвиг, зададим его равным нулю
         try:
