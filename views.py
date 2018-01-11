@@ -348,8 +348,8 @@ def CHapi(request):
             if attribution_model == 'first_interaction':
                 for date in period:
                     date0 = (datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
-                    q = '''SELECT {dimension_with_alias},{sum_metric_string}
-                               FROM (SELECT visitorId,any({dimension_with_alias}) as {dimension_with_alias} FROM {table}
+                    q = '''SELECT {dimension},{sum_metric_string}
+                               FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
                                WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
                                ALL INNER JOIN
@@ -360,7 +360,30 @@ def CHapi(request):
                                {limit}
                                                   FORMAT JSON
                                                   '''.format(dimension_with_alias=dimensionslist_with_segments_and_aliases[n+1], date0=str(date0),
-                                                             metric_counts=metric_counts,dimension=dimension,
+                                                             metric_counts=metric_counts,dimension=dimension,dimension_without_aliases=list_with_time_dimensions_without_aliases[n+1],
+                                                             sum_metric_string=sum_metric_string,
+                                                             date1=date['date1'], sort_column=sort_column_in_query,
+                                                             date2=date['date2'], filt=filt, sort_order=sort_order,
+                                                             limit=limit,
+                                                             table=table.format(dimension=using),
+                                                             date_field=date_field)
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+            elif attribution_model == 'last_non-direct_interaction':
+                for date in period:
+                    date0 = (datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
+                    q = '''SELECT {dimension},{sum_metric_string}
+                               FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
+                               WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                               AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
+                               ALL RIGHT JOIN
+                               (SELECT {metric_counts},visitorId,any({dimension_without_aliases}) as {dimension} FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                               USING visitorId
+                               GROUP BY {dimension}
+                               ORDER BY {sort_column} {sort_order}
+                               {limit}
+                                                  FORMAT JSON
+                                                  '''.format(dimension_with_alias=dimensionslist_with_segments_and_aliases[n+1],
+                                                             metric_counts=metric_counts,dimension=dimension,dimension_without_aliases=list_with_time_dimensions_without_aliases[n+1],
                                                              sum_metric_string=sum_metric_string,
                                                              date1=date['date1'], sort_column=sort_column_in_query,
                                                              date2=date['date2'], filt=filt, sort_order=sort_order,
@@ -420,19 +443,11 @@ def CHapi(request):
                 tab='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
             else:
                 tab=table
-            if attribution_model != 'first_interaction':
-                q = ''' SELECT {dimension_counts}
-                     FROM {table}
-                     WHERE 1 {filt} AND {date_filt}
-                     ORDER BY NULL {sort_order}
-                     FORMAT JSON
-                    '''.format(date1=period[0]['date1'], date2=period[0]['date2'], dimension_counts=dimension_counts[dim_num], filt=filt,
-                               sort_order=sort_order,table=tab.format(dimension=dimensionslist[dim_num]),date_filt=date_filt)
-                print(q)
-            else:
+
+            if attribution_model=='first_interaction':
                 date0 = (datetime.strptime(period[0]['date1'], '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
-                q = '''SELECT {dimension_counts}
-                                    FROM (SELECT visitorId,any({dimension_with_alias}) as {dimension_with_alias} FROM {table}
+                q = '''SELECT CAST(uniq({dimension}),'Int') as h{dimension}
+                                    FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
                                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                     AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
                                     ALL INNER JOIN
@@ -440,13 +455,44 @@ def CHapi(request):
                                     USING visitorId
                                     ORDER BY NULL {sort_order}
                                                        FORMAT JSON
-                                                       '''.format(dimension_with_alias=dimensionslist[dim_num],
+                                                       '''.format(dimension_with_alias=dimensionslist[dim_num],dimension_without_aliases=list_with_time_dimensions_without_aliases[dim_num],
                                                                   date0=str(date0),dimension_counts=dimension_counts[dim_num],
-                                                                  date1=period[0]['date1'],
+                                                                  date1=period[0]['date1'],dimension=dimensionslist[dim_num],
                                                                   date2=period[0]['date2'], filt=filt, sort_order=sort_order,
                                                                   limit=limit,
                                                                   table=tab.format(dimension=dimensionslist[dim_num]),
                                                                   date_field=date_field)
+            elif attribution_model=='last_non-direct_interaction':
+                q = '''SELECT CAST(uniq({dimension}),'Int') as h{dimension}
+                                                    FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
+                                                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                                                    AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
+                                                    ALL RIGHT JOIN
+                                                    (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table} WHERE 1 {filt}  AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                                                    USING visitorId
+                                                    ORDER BY NULL {sort_order}
+                                                                       FORMAT JSON
+                                                                       '''.format(
+                    dimension_with_alias=dimensionslist[dim_num],dimension_without_aliases=list_with_time_dimensions_without_aliases[dim_num],
+                    dimension_counts=dimension_counts[dim_num],
+                    date1=period[0]['date1'],dimension=dimensionslist[dim_num],
+                    date2=period[0]['date2'], filt=filt, sort_order=sort_order,
+                    limit=limit,
+                    table=tab.format(dimension=dimensionslist[dim_num]),
+                    date_field=date_field)
+                print(q)
+            else:
+                q = ''' SELECT {dimension_counts}
+                                FROM {table}
+                                WHERE 1 {filt} AND {date_filt}
+                                ORDER BY NULL {sort_order}
+                                FORMAT JSON
+                               '''.format(date1=period[0]['date1'], date2=period[0]['date2'],
+                                          dimension_counts=dimension_counts[dim_num], filt=filt,
+                                          sort_order=sort_order, table=tab.format(dimension=dimensionslist[dim_num]),
+                                          date_filt=date_filt)
+                print(q)
+
 
             try:
                 a.update(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0])
@@ -655,28 +701,46 @@ def CHapi(request):
             #если указана модель аттрибуции показатели рассчитываются для первого визита
 
             if attribution_model=='first_interaction':
-
                 for date in period:
                     date0=(datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
-                    q = '''SELECT {dimension_with_alias},{sum_metric_string}
-                    FROM (SELECT visitorId,any({dimension_with_alias}) as {dimension_with_alias} FROM {table}
+                    q = '''SELECT {dimension},{sum_metric_string}
+                    FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                     AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
                     ALL INNER JOIN
                     (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
                     USING visitorId
-                    GROUP BY {dimension_with_alias}
+                    GROUP BY {dimension}
                     ORDER BY {sort_column} {sort_order}
                     {limit}
                                        FORMAT JSON
-                                       '''.format(dimension_with_alias=dim_with_alias[0],date0=str(date0),
+                                       '''.format(dimension_with_alias=dim_with_alias[0],date0=str(date0),dimension=dim[0],dimension_without_aliases=list_with_time_dimensions_without_aliases[0],
                                                   metric_counts=metric_counts,sum_metric_string=sum_metric_string,
                                                   date1=date['date1'],sort_column=sort_column_in_query,
                                                   date2=date['date2'], filt=filt,sort_order=sort_order,limit=limit,
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
                     print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
-
+            elif  attribution_model=='last_non-direct_interaction':
+                for date in period:
+                    q = '''SELECT {dimension},{sum_metric_string}
+                    FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
+                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                    AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
+                    ALL RIGHT JOIN
+                    (SELECT {metric_counts},visitorId,any({dimension_without_aliases}) as {dimension} FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                    USING visitorId
+                    GROUP BY {dimension}
+                    ORDER BY {sort_column} {sort_order}
+                    {limit}
+                                       FORMAT JSON
+                                       '''.format(dimension_with_alias=dim_with_alias[0],dimension=dim[0],dimension_without_aliases=list_with_time_dimensions_without_aliases[0],
+                                                  metric_counts=metric_counts,sum_metric_string=sum_metric_string,
+                                                  date1=date['date1'],sort_column=sort_column_in_query,
+                                                  date2=date['date2'], filt=filt,sort_order=sort_order,limit=limit,
+                                                  table=table.format(dimension=dim[0]), date_field=date_field)
+                    print(q)
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             else:
                 for date in period:
                     q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
@@ -877,38 +941,48 @@ def CHapi(request):
         #Создание списка параметров без сегментов
         dimensionslist_with_segments_and_aliases=[]
         time_dimensions_dict={}
+        list_with_time_dimensions_without_aliases=[]#список с параметрами,в которых временные параматры, типа year,month и тд будут представлены без алиасов
         for d in dimensionslist_with_segments:
             if 'segment' not in d and d!=list:
                 dimensionslist.append(d)
                 if d == 'month':
                     time_dimensions_dict[d] = "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang)
                     dimensionslist_with_segments_and_aliases.append("dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp)))) as month".format(lang=lang))
+                    list_with_time_dimensions_without_aliases.append("dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang))
                     continue
                 if d == 'second':
                     time_dimensions_dict[d]="toSecond(toDateTime(serverTimestamp))"
                     dimensionslist_with_segments_and_aliases.append("toSecond(toDateTime(serverTimestamp)) as second")
+                    list_with_time_dimensions_without_aliases.append("toSecond(toDateTime(serverTimestamp))")
                     continue
                 if d == 'minute':
                     time_dimensions_dict[d]="toMinute(toDateTime(serverTimestamp))"
                     dimensionslist_with_segments_and_aliases.append("toMinute(toDateTime(serverTimestamp)) as minute")
+                    list_with_time_dimensions_without_aliases.append("toMinute(toDateTime(serverTimestamp))")
                     continue
                 if d == 'year':
                     time_dimensions_dict[d]="toYear(toDate(serverTimestamp))"
                     dimensionslist_with_segments_and_aliases.append("toYear(toDate(serverTimestamp)) as year")
+                    list_with_time_dimensions_without_aliases.append("toYear(toDate(serverTimestamp))")
                     continue
                 if d == 'day_of_week_code':
                     time_dimensions_dict[d]="toDayOfWeek(toDate(serverTimestamp))"
                     dimensionslist_with_segments_and_aliases.append("toDayOfWeek(toDate(serverTimestamp)) as day_of_week_code")
+                    list_with_time_dimensions_without_aliases.append("toDayOfWeek(toDate(serverTimestamp))")
                     continue
                 if d=='month_code':
                     time_dimensions_dict[d] = "toMonth(toDate(serverTimestamp))"
                     dimensionslist_with_segments_and_aliases.append(
                         "toMonth(toDate(serverTimestamp)) as month_code")
+                    list_with_time_dimensions_without_aliases.append(
+                        "toMonth(toDate(serverTimestamp))")
                     continue
                 if d=='date':
                     time_dimensions_dict[d] = "toDate(serverTimestamp)"
                     dimensionslist_with_segments_and_aliases.append(
                         "toDate(serverTimestamp) as date")
+                    list_with_time_dimensions_without_aliases.append(
+                        "toDate(serverTimestamp)")
                     continue
                 if d == 'day_of_week':
                     time_dimensions_dict[
@@ -917,7 +991,12 @@ def CHapi(request):
                     dimensionslist_with_segments_and_aliases.append(
                         "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp)))) as day_of_week".format(
                             lang=lang))
+                    list_with_time_dimensions_without_aliases.append(
+                        "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
+                            lang=lang))
                     continue
+                list_with_time_dimensions_without_aliases.append(d)
+
             dimensionslist_with_segments_and_aliases.append(d)
 
         metrics = json.loads(request.body.decode('utf-8'))['metrics']
