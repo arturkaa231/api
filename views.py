@@ -376,7 +376,7 @@ def CHapi(request):
                                WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
                                ALL RIGHT JOIN
-                               (SELECT {metric_counts},visitorId,any({dimension_without_aliases}) as {dimension} FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                               (SELECT {metric_counts},visitorId,{dimension} FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimension},visitorId)
                                USING visitorId
                                GROUP BY {dimension}
                                ORDER BY {sort_column} {sort_order}
@@ -468,7 +468,7 @@ def CHapi(request):
                                                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                                     AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
                                                     ALL RIGHT JOIN
-                                                    (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table} WHERE 1 {filt}  AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                                                    (SELECT visitorId,{dimension} FROM {table} WHERE 1 {filt}  AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimension},visitorId)
                                                     USING visitorId
                                                     ORDER BY NULL {sort_order}
                                                                        FORMAT JSON
@@ -728,7 +728,7 @@ def CHapi(request):
                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                     AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
                     ALL RIGHT JOIN
-                    (SELECT {metric_counts},visitorId,any({dimension_without_aliases}) as {dimension} FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                    (SELECT {metric_counts},visitorId, {dimension} FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId,{dimension})
                     USING visitorId
                     GROUP BY {dimension}
                     ORDER BY {sort_column} {sort_order}
