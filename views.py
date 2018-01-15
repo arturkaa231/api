@@ -73,7 +73,7 @@ def MetricCounts(metrics, headers):
             continue
         if 'nb_actions_per_visit'==i:
             metric_counts.append(
-                "if(uniq(idVisit)=0,0,floor(sum(actions)/uniq(idVisit),2)) as {metric}".format(metric=i))
+                "if(uniq(idVisit)=0,0,floor(count(*)/uniq(idVisit),2)) as {metric}".format(metric=i))
             continue
         if 'nb_pageviews_per_visit'==i:
             metric_counts.append("floor(sum(Type='action')/uniq(idVisit),2) as {metric}".format(metric=i))
@@ -107,7 +107,7 @@ def MetricCounts(metrics, headers):
                 'https://s.analitika.online/api/reference/calculated_metrics?code=calculated_metric{num}'.format(
                     num=int(i[17:])),
                 headers=headers).content.decode('utf-8'))['results'][0]['definition']
-            calc_metr = calc_metr.replace('impressions', 'sum(Impressions}').replace('nb_actions_per_visit',"if(uniq(idVisit)=0,0,floor(sum(actions)/uniq(idVisit),2))")\
+            calc_metr = calc_metr.replace('impressions', 'sum(Impressions}').replace('nb_actions_per_visit',"if(uniq(idVisit)=0,0,floor(count(*)/uniq(idVisit),2))")\
                     .replace('nb_downloas_per_visit',"if(uniq(idVisit)=0,0,floor(sum(Type='download')/uniq(idVisit),2))").replace('cost', 'sum(Cost)')\
                     .replace('clicks', 'sum(Clicks)').replace('nb_visits_with_searches',"countIf(searches>0)").replace('nb_visits', 'uniq(idVisit)').replace('nb_actions','count(*)')\
                     .replace('nb_visitors', 'uniq(visitorId)').replace('bounce_count','sum(visitDuration=0)').replace('bounce_rate','if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2))')\
