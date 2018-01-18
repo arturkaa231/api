@@ -1000,9 +1000,14 @@ def CHapi(request):
             dimensionslist_with_segments_and_aliases.append(d)
 
         metrics = json.loads(request.body.decode('utf-8'))['metrics']
-        # строка  "sum(metric1),sum(metric2)..."
-        sum_metric_string=','.join(["CAST(sum("+i+"),'Int') as "+i for i in metrics])
-
+        # строка  "sum(metric1),avg(metric2)...". если показатель относительный используется avg, если нет - sum
+        sum_metric_string=[]
+        for i in metrics:
+            if i in ['conversion_rate','bounce_rate','nb_new_visits_per_all_visits','nb_new_visitors_per_all_visitors','avg_time_generation','nb_return_visitors_per_all_visitors','avg_visit_length','nb_pageviews_per_visit','nb_actions_per_visit','nb_downloas_per_visit'] or i.find(r'goal\d{1,3}_conversion') != -1:
+                sum_metric_string.append("floor(avg("+i+"),2) as "+i)
+            else:
+                sum_metric_string.append("CAST(sum(" + i + "),'Int') as " + i)
+        sum_metric_string=','.join(sum_metric_string)
         #если в запросе не указан сдвиг, зададим его равным нулю
         try:
             offset = json.loads(request.body.decode('utf-8'))['offset']
@@ -1037,53 +1042,21 @@ def CHapi(request):
             attribution_lookup_period=""
 
         date_field = 'serverDate'
-        table = 'CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
+        table = 'CHdatabase.hits_with_visits'
         list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
                        'AdPosition', 'AdPositionType', 'AdRegionId', 'AdRetargetindId', 'AdPlacement', 'AdTargetId', 'AdvertisingSystem', 'DRF', 'campaignContent',
                        'campaignKeyword', 'campaignMedium', 'campaignName', 'campaignSource']
         is_ad=False
-        print(metrics)
+
         #Выбираем таблицу
         for metr in metrics:
             if metr in ['cost','impressions','clicks']:
-                table="""(SELECT
-                    idSite,idVisit,visitIp,visitorId,goalConversions,siteCurrency,siteCurrencySymbol,serverDate,visitServerHour,lastActionTimestamp,
-                    lastActionDateTime,userId,visitorType,visitorTypeIcon,visitConverted,visitConvertedIcon,visitCount,firstActionTimestamp,
-                    visitEcommerceStatus,visitEcommerceStatusIcon,daysSinceFirstVisit,daysSinceLastEcommerceOrder,visitDuration,visitDurationPretty,
-                    searches,actions,interactions,referrerType,referrerTypeName,referrerName,referrerKeyword,referrerKeywordPosition,referrerUrl,
-                    referrerSearchEngineUrl,referrerSearchEngineIcon,languageCode,language,deviceType,deviceTypeIcon,deviceBrand,deviceModel,operatingSystem,
-                    operatingSystemName,operatingSystemIcon,operatingSystemCode,operatingSystemVersion,browserFamily,browserFamilyDescription,browser,browserName,
-                    browserIcon,browserCode,browserVersion,events,continent,continentCode,country,countryCode,countryFlag,region,regionCode,city,location,latitude,
-                    longitude,visitLocalTime,visitLocalHour,daysSinceLastVisit,customVariables,resolution,plugins,pluginsIcons,provider,providerName,providerUrl,dimension1,
-                    campaignId,campaignContent,campaignKeyword,campaignMedium,campaignName,campaignSource,serverTimestamp,serverTimePretty,serverDatePretty,
-                    serverDatePrettyFirstAction,serverTimePrettyFirstAction,totalEcommerceRevenue,totalEcommerceConversions,totalEcommerceItems,totalAbandonedCartsRevenue,
-                    totalAbandonedCarts,totalAbandonedCartsItems,AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId,AdPosition,AdPositionType,AdRegionId,
-                    AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF,Gclid,SmartClickId,decodedServerTimestamp,Cost,Clicks,Impressions,StatDate
-                    FROM CHdatabase.adstat
-                    ANY RIGHT JOIN CHdatabase.visits USING {dimension})
-                    ALL INNER JOIN CHdatabase.hits
-                    USING idVisit"""
+                table="CHdatabase.hits_with_visits ALL LEFT JOIN CHdatabase.adstat USING {dimension}"
                 is_ad=True
                 break
         for dim in dimensionslist:
             if dim in ['Cost', 'Impressions', 'Clicks','StatDate']:
-                table = """(SELECT
-                    idSite,idVisit,visitIp,visitorId,goalConversions,siteCurrency,siteCurrencySymbol,serverDate,visitServerHour,lastActionTimestamp,
-                    lastActionDateTime,userId,visitorType,visitorTypeIcon,visitConverted,visitConvertedIcon,visitCount,firstActionTimestamp,
-                    visitEcommerceStatus,visitEcommerceStatusIcon,daysSinceFirstVisit,daysSinceLastEcommerceOrder,visitDuration,visitDurationPretty,
-                    searches,actions,interactions,referrerType,referrerTypeName,referrerName,referrerKeyword,referrerKeywordPosition,referrerUrl,
-                    referrerSearchEngineUrl,referrerSearchEngineIcon,languageCode,language,deviceType,deviceTypeIcon,deviceBrand,deviceModel,operatingSystem,
-                    operatingSystemName,operatingSystemIcon,operatingSystemCode,operatingSystemVersion,browserFamily,browserFamilyDescription,browser,browserName,
-                    browserIcon,browserCode,browserVersion,events,continent,continentCode,country,countryCode,countryFlag,region,regionCode,city,location,latitude,
-                    longitude,visitLocalTime,visitLocalHour,daysSinceLastVisit,customVariables,resolution,plugins,pluginsIcons,provider,providerName,providerUrl,dimension1,
-                    campaignId,campaignContent,campaignKeyword,campaignMedium,campaignName,campaignSource,serverTimestamp,serverTimePretty,serverDatePretty,
-                    serverDatePrettyFirstAction,serverTimePrettyFirstAction,totalEcommerceRevenue,totalEcommerceConversions,totalEcommerceItems,totalAbandonedCartsRevenue,
-                    totalAbandonedCarts,totalAbandonedCartsItems,AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId,AdPosition,AdPositionType,AdRegionId,
-                    AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF,Gclid,SmartClickId,decodedServerTimestamp,Cost,Clicks,Impressions,StatDate
-                    FROM CHdatabase.adstat
-                    ANY RIGHT JOIN CHdatabase.visits USING {dimension})
-                    ALL INNER JOIN CHdatabase.hits
-                    USING idVisit"""
+                table = "CHdatabase.hits_with_visits ALL LEFT JOIN CHdatabase.adstat USING {dimension}"
                 is_ad = True
                 break
 
@@ -1098,7 +1071,13 @@ def CHapi(request):
         # ФОрмируем массив с запросом каждого показателя в SQL
         metric_counts_list=MetricCounts(metrics,headers)
         metric_counts=','.join(metric_counts_list)
-
+        # Заполнение таблицы с рекламной статистикой
+        load_query = "INSERT INTO CHdatabase.adstat VALUES "
+        print(json.loads(requests.get('https://s.analitika.online/api/ad_stat/', headers=headers).content.decode('utf-8')))
+        for part in json.loads(requests.get('https://s.analitika.online/api/ad_stat/', headers=headers).content.decode('utf-8'))['results']:
+            query = load_query + "(" + str(list(part.values()))[1:len(str(list(part.values()))) - 1] + ")"
+            query = query.replace("None", "'none'")
+            get_clickhouse_data(query, 'http://85.143.172.199:8123')
         #Фильтр по всем датам
         date_filt = []
         for dates in period:
