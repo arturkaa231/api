@@ -1040,7 +1040,12 @@ def CHapi(request):
             attribution_lookup_period=json.loads(request.body.decode('utf-8'))['attribution_lookup_period']
         except:
             attribution_lookup_period=""
-
+        try:
+            profile_id=json.loads(request.body.decode('utf-8'))['profile_id']
+            filt=filt+'AND idSite=='+str(json.loads(requests.get('https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id), headers=headers).content.decode('utf-8'))['site_id'])
+        except:
+            pass
+        print(filt)
         date_field = 'serverDate'
         table = 'CHdatabase.hits_with_visits'
         list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
@@ -1073,11 +1078,11 @@ def CHapi(request):
         metric_counts=','.join(metric_counts_list)
         # Заполнение таблицы с рекламной статистикой
         load_query = "INSERT INTO CHdatabase.adstat VALUES "
-        print(json.loads(requests.get('https://s.analitika.online/api/ad_stat/', headers=headers).content.decode('utf-8')))
+
         for part in json.loads(requests.get('https://s.analitika.online/api/ad_stat/', headers=headers).content.decode('utf-8'))['results']:
             query = load_query + "(" + str(list(part.values()))[1:len(str(list(part.values()))) - 1] + ")"
             query = query.replace("None", "'none'")
-            get_clickhouse_data(query, 'http://85.143.172.199:8123')
+            #get_clickhouse_data(query, 'http://85.143.172.199:8123')
         #Фильтр по всем датам
         date_filt = []
         for dates in period:
