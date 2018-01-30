@@ -1042,10 +1042,25 @@ def CHapi(request):
             attribution_lookup_period=""
         try:
             profile_id=json.loads(request.body.decode('utf-8'))['profile_id']
-            filt=filt+'AND idSite=='+str(json.loads(requests.get('https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id), headers=headers).content.decode('utf-8'))['site_id'])
+            try:
+                if json.loads(get_clickhouse_data(
+                        'SELECT idSite FROM CHdatabase.hits_with_visits WHERE idSite={idSite} FORMAT JSON'.format(
+                                idSite=json.loads(requests.get(
+                                        'https://s.analitika.online/api/profiles/{profile_id}/'.format(
+                                                profile_id=profile_id), headers=headers).content.decode('utf-8'))[
+                                    'site_id']), 'http://85.143.172.199:8123'))['data'] == []:
+                    filt = 'AND 0'
+                else:
+                    filt = filt + 'AND idSite==' + str(json.loads(requests.get(
+                        'https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id),
+                        headers=headers).content.decode('utf-8'))['site_id'])
+            except:
+                filt = 'AND 0'
         except:
             pass
-        print(filt)
+        #print(json.loads(requests.get('https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id), headers=headers).content.decode('utf-8')))
+
+
         date_field = 'serverDate'
         table = 'CHdatabase.hits_with_visits'
         list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
