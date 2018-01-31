@@ -8,7 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 import pprint
 import re
 from datetime import datetime, timedelta
-
+import pytz
 def MetricCounts(metrics, headers):
     metric_counts = []
     for i in metrics:
@@ -445,7 +445,7 @@ def CHapi(request):
                 tab=table
 
             if attribution_model=='first_interaction':
-                date0 = (datetime.strptime(period[0]['date1'], '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
+                date0 = (datetime.strptime(relative_period[0]['date1'], '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
                 q = '''SELECT CAST(uniq({dimension}),'Int') as h{dimension}
                                     FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
                                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
@@ -457,8 +457,8 @@ def CHapi(request):
                                                        FORMAT JSON
                                                        '''.format(dimension_with_alias=dimensionslist[dim_num],dimension_without_aliases=list_with_time_dimensions_without_aliases[dim_num],
                                                                   date0=str(date0),dimension_counts=dimension_counts[dim_num],
-                                                                  date1=period[0]['date1'],dimension=dimensionslist[dim_num],
-                                                                  date2=period[0]['date2'], filt=filt, sort_order=sort_order,
+                                                                  date1=relative_period[0]['date1'],dimension=dimensionslist[dim_num],
+                                                                  date2=relative_period[0]['date2'], filt=filt, sort_order=sort_order,
                                                                   limit=limit,
                                                                   table=tab.format(dimension=dimensionslist[dim_num]),
                                                                   date_field=date_field)
@@ -475,8 +475,8 @@ def CHapi(request):
                                                                        '''.format(
                     dimension_with_alias=dimensionslist[dim_num],dimension_without_aliases=list_with_time_dimensions_without_aliases[dim_num],
                     dimension_counts=dimension_counts[dim_num],
-                    date1=period[0]['date1'],dimension=dimensionslist[dim_num],
-                    date2=period[0]['date2'], filt=filt, sort_order=sort_order,
+                    date1=relative_period[0]['date1'],dimension=dimensionslist[dim_num],
+                    date2=relative_period[0]['date2'], filt=filt, sort_order=sort_order,
                     limit=limit,
                     table=tab.format(dimension=dimensionslist[dim_num]),
                     date_field=date_field)
@@ -487,13 +487,10 @@ def CHapi(request):
                                 WHERE 1 {filt} AND {date_filt}
                                 ORDER BY NULL {sort_order}
                                 FORMAT JSON
-                               '''.format(date1=period[0]['date1'], date2=period[0]['date2'],
-                                          dimension_counts=dimension_counts[dim_num], filt=filt,
+                               '''.format(dimension_counts=dimension_counts[dim_num], filt=filt,
                                           sort_order=sort_order, table=tab.format(dimension=dimensionslist[dim_num]),
                                           date_filt=date_filt)
                 print(q)
-
-
             try:
                 a.update(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0])
             except:
@@ -522,7 +519,7 @@ def CHapi(request):
                 metric_counts_visits.append(metr)
         metric_counts_stat=','.join(metric_counts_stat)
         metric_counts_visits = ','.join(metric_counts_visits)
-        for date in period:
+        for (date,abs_date) in zip(relative_period,period):
             # Запрос на получение сумм показателей без фильтра
             q_total = ''' SELECT {metric_counts}
                     FROM {table}
@@ -585,7 +582,7 @@ def CHapi(request):
                 for i in metric_dict:
                     metric_dict[i]={"total_sum":0,"sum":0}
             # Добавляем в него даты
-            metric_dict.update(date)
+            metric_dict.update(abs_date)
             dates.append(metric_dict)
         return dates
     def AddMetricSumsWithFilt(period,metric_counts,filt,metrics,sort_order,table):
@@ -649,7 +646,7 @@ def CHapi(request):
             seg_filt=seg.partition("==")[0]+"=='"+seg.partition("==")[2]+"'"
             seg_label=json.loads(requests.get('https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[0][7:])),
                                 headers=headers).content.decode('utf-8'))['name']
-            for date in period:
+            for date in relative_period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
                                                                       WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
                                                                       FORMAT JSON
@@ -701,7 +698,7 @@ def CHapi(request):
             #если указана модель аттрибуции показатели рассчитываются для первого визита
 
             if attribution_model=='first_interaction':
-                for date in period:
+                for date in relative_period:
                     date0=(datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
                     q = '''SELECT {dimension},{sum_metric_string}
                     FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
@@ -722,7 +719,7 @@ def CHapi(request):
                     print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             elif  attribution_model=='last_non-direct_interaction':
-                for date in period:
+                for date in relative_period:
                     q = '''SELECT {dimension},{sum_metric_string}
                     FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
@@ -742,7 +739,7 @@ def CHapi(request):
                     print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             else:
-                for date in period:
+                for date in relative_period:
                     q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
                                        WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                        GROUP BY {dimension}
@@ -808,7 +805,7 @@ def CHapi(request):
                 'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(num)),
                 headers=headers).content.decode('utf-8'))['name']
             counter=0
-            for date in period:
+            for date in relative_period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
                                                                       WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
                                                                       FORMAT JSON
@@ -1043,6 +1040,32 @@ def CHapi(request):
         try:
             profile_id=json.loads(request.body.decode('utf-8'))['profile_id']
             try:
+                timezone = json.loads(requests.get(
+                    'https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id),
+                    headers=headers).content.decode('utf-8'))['timezone']
+                date1 = datetime.strptime(period[0]['date1'] + '-00', '%Y-%m-%d-%H')
+                timezone = pytz.timezone(timezone)
+                date1 = timezone.localize(date1)
+                time_offset = str(date1)[19:]
+                relative_period = []
+                for date in period:
+                    if time_offset[0] == '+':
+                        relative_period.append({'date1': str(
+                            datetime.strptime(date['date1'] + '-00', '%Y-%m-%d-%H') - timedelta(
+                                hours=int(time_offset[2]) - 3)), 'date2': str(
+                            datetime.strptime(date['date2'] + '-00', '%Y-%m-%d-%H') - timedelta(
+                                hours=int(time_offset[2]) - 3))})
+                    else:
+                        relative_period.append({'date1': str(
+                            datetime.strptime(date['date1'] + '-00', '%Y-%m-%d-%H') - timedelta(
+                                hours=-int(time_offset[2]) - 3)),
+                            'date2': str(datetime.strptime(date['date2'] + '-00', '%Y-%m-%d-%H') - timedelta(
+                                hours=-int(time_offset[2]) - 3))})
+                date_field='toDateTime(serverTimestamp)'
+            except:
+                relative_period=period
+                date_field = 'serverDate'
+            try:
                 if json.loads(get_clickhouse_data(
                         'SELECT idSite FROM CHdatabase.hits_with_visits WHERE idSite={idSite} FORMAT JSON'.format(
                                 idSite=json.loads(requests.get(
@@ -1058,10 +1081,12 @@ def CHapi(request):
                 filt = 'AND 0'
         except:
             pass
+            relative_period=period
+            date_field = 'serverDate'
+
         #print(json.loads(requests.get('https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id), headers=headers).content.decode('utf-8')))
+        print(relative_period)
 
-
-        date_field = 'serverDate'
         table = 'CHdatabase.hits_with_visits'
         list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
                        'AdPosition', 'AdPositionType', 'AdRegionId', 'AdRetargetindId', 'AdPlacement', 'AdTargetId', 'AdvertisingSystem', 'DRF', 'campaignContent',
@@ -1100,7 +1125,7 @@ def CHapi(request):
             #get_clickhouse_data(query, 'http://85.143.172.199:8123')
         #Фильтр по всем датам
         date_filt = []
-        for dates in period:
+        for dates in relative_period:
             date_filt.append(
                 "({date_field} BETWEEN '".format(date_field=date_field) + str(dates['date1']) + "' AND '" + str(
                     dates['date2']) + "')")
