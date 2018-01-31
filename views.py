@@ -159,6 +159,7 @@ def CHapi(request):
                                                       table=table.format(dimension=dim), date_filt=date_filt)
 
         all_labeldicts = json.loads(get_clickhouse_data(q_all, 'http://85.143.172.199:8123'))['data']
+
         all_label = []
         sorted_array = array_dates[0]
         for i in all_labeldicts:
@@ -178,6 +179,7 @@ def CHapi(request):
             for j in i:
                 sub_dict[j[dim]] = j
             array_dates_dicts.append(sub_dict)
+
         return array_dates_dicts
     def MaxLenNum(array_dates):
         """Возвращает порядок элемента списка с наибольшей длиной"""
@@ -408,7 +410,7 @@ def CHapi(request):
 
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm)
-            for i2 in array_dates[MaxLenNum(array_dates)]:
+            for i2 in array_dates[MaxLenNum(array_dates)][:int(lim)]:
                 stat_dict = {'label': i2[dimensionslist_with_segments[n + 1]],
                              'segment':'{label}=={value}'.format(label=dimensionslist_with_segments[n + 1]
                                                                  ,value=i2[dimensionslist_with_segments[n + 1]])}
@@ -618,7 +620,6 @@ def CHapi(request):
     def AddStats2(dim,dim_with_alias, metric_counts, filt, limit, period, metrics, table,date_filt):
         """Добавление ключа stats в ответ"""
         stats = []
-
         if dim[0] not in list_of_adstat_par and is_ad:
             return stats
         #Определяем, есть ли вначале dimensions группа сегментов
@@ -752,10 +753,11 @@ def CHapi(request):
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
                     print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+
             dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1)
 
                 #определим самый большой список в array_dates
-            for i in array_dates[MaxLenNum(array_dates)]:
+            for i in array_dates[MaxLenNum(array_dates)][:int(lim)]:
                 if search_pattern.lower() not in str(i[dim[0]]).lower():
                     continue
                 stat_dict = {'label': i[dim[0]],
@@ -1012,6 +1014,7 @@ def CHapi(request):
             offset='0'
         #если в запросе не указан лимит, зададим его путой строкой, если указан, составим строку LIMIT...
         try:
+            lim=json.loads(request.body.decode('utf-8'))['limit']
             limit = 'LIMIT '+str(offset)+','+str(json.loads(request.body.decode('utf-8'))['limit'])
         except:
             limit=''
@@ -1022,7 +1025,10 @@ def CHapi(request):
         except:
             filt=" "
         else:
-            filt="AND"+"("+FilterParse(filter)+")"
+            if filter!="":
+                filt="AND"+"("+FilterParse(filter)+")"
+            else:
+                filt="AND 1"
 
         having = 'HAVING 1'
         try:
