@@ -1077,12 +1077,12 @@ def CHapi(request):
                                 idSite=json.loads(requests.get(
                                         'https://s.analitika.online/api/profiles/{profile_id}/'.format(
                                                 profile_id=profile_id), headers=headers).content.decode('utf-8'))[
-                                    'site_id']), 'http://85.143.172.199:8123'))['data'] == []:
+                                    'site_db_id']), 'http://85.143.172.199:8123'))['data'] == []:
                     filt = 'AND 0'
                 else:
                     filt = filt + 'AND idSite==' + str(json.loads(requests.get(
                         'https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id),
-                        headers=headers).content.decode('utf-8'))['site_id'])
+                        headers=headers).content.decode('utf-8'))['site_db_id'])
             except:
                 filt = 'AND 0'
         except:
