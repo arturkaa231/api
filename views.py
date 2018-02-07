@@ -1298,8 +1298,8 @@ def diagram_stat(request):
                     WHERE {date_field} BETWEEN '{date1}' AND '{date2}'
                     ORDER BY NULL {sort_order}
                     FORMAT JSON
-                   '''.format(date1=date1, date2=date2, metric_counts=metric_counts_visits,
-                              sort_order=sort_order,table='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit',date_field=date_field)
+                   '''.format(date1=relative_date1, date2=relative_date2, metric_counts=metric_counts_visits,
+                              sort_order=sort_order,table=table,date_field=date_field)
 
         # С фильтром
         q = ''' SELECT {metric_counts}
@@ -1307,14 +1307,14 @@ def diagram_stat(request):
                                 WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                 ORDER BY NULL {sort_order}
                                 FORMAT JSON
-                               '''.format(date1=date1, date2=date2, metric_counts=metric_counts_visits,
-                                          filt=filt, sort_order=sort_order,table='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit',date_field=date_field)
+                               '''.format(date1=relative_date1, date2=relative_date2, metric_counts=metric_counts_visits,
+                                          filt=filt, sort_order=sort_order,table=table,date_field=date_field)
         q_total_stat = ''' SELECT {metric_counts}
                                                            FROM {table}
                                                            WHERE {date_field} BETWEEN '{date1}' AND '{date2}'
                                                            ORDER BY NULL {sort_order}
                                                            FORMAT JSON
-                                                          '''.format(date1=date1, date2=date2,
+                                                          '''.format(date1=relative_date1, date2=relative_date2,
                                                                      metric_counts=metric_counts_stat,
                                                                      sort_order=sort_order,
                                                                      table=table.format(dimension=dimensionslist[0]),
@@ -1325,8 +1325,8 @@ def diagram_stat(request):
                                                                        WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                                                        ORDER BY NULL {sort_order}
                                                                        FORMAT JSON
-                                                                      '''.format(date1=date1,
-                                                                                 date2=date2,
+                                                                      '''.format(date1=relative_date1,
+                                                                                 date2=relative_date2,
                                                                                  metric_counts=metric_counts_stat,
                                                                                  filt=filt, sort_order=sort_order,
                                                                                  table=table.format(
@@ -1354,36 +1354,6 @@ def diagram_stat(request):
         metric_dict.update({'date1':date1,'date2':date2})
         dates.append(metric_dict)
         return dates
-    def AddMetricSumsWithFilt(period,metric_counts,filt,metrics,sort_order,table):
-        ar_d=[]
-        for date in period:
-            t = '''SELECT {metric_counts} FROM {table}
-                    WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
-                    FORMAT JSON
-                    '''.format(
-                metric_counts=metric_counts,
-                date1=date['date1'],
-                date2=date['date2'], filt=filt,
-                table=table, date_field=date_field)
-
-            ar_d.append(json.loads(get_clickhouse_data(t, 'http://85.143.172.199:8123'))['data'])
-        counter=0
-        for i in ar_d[0]:
-            try:
-                st_d = {'label': 'Все данные',
-                            'segment': filter.replace(',',' OR ').replace(';',' AND ') }
-            except:
-                st_d = {'label': 'Все данные',
-                             'segment': ''}
-            dates = []
-            for m in range(len(ar_d)):
-                metrics_dict = dict.fromkeys(metrics)
-                for j in metrics_dict:
-                    metrics_dict[j] = ar_d[m][counter][j]
-                dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
-            st_d['dates'] = dates
-            counter+=1
-        return st_d
     def AddStats2(dimensionslist,dim_with_aliases, metric_counts, filt, limit, having, date1,date2, metrics, table):
         """Добавление ключа stats в ответ"""
         #Определяем, есть ли вначале dimensions группа сегментов
@@ -1620,69 +1590,80 @@ def diagram_stat(request):
                 filt=""
         except:
             filt=""
-
         try:
             filter_metric = json.loads(request.body.decode('utf-8'))['filter_metric']
         except:
             having=" "
         else:
             having = 'HAVING'+' '+FilterParse(filter_metric)
-        try:
-            search_pattern=json.loads(request.body.decode('utf-8'))['search_pattern']
-
-        except:
-            search_pattern=""
         #если список dimensionslist пуст, значит были переданы только сегменты
+        try:
+            profile_id=json.loads(request.body.decode('utf-8'))['profile_id']
+            try:
+                #Определяем относительное время(с учетом часового пояса)
+                timezone = json.loads(requests.get(
+                    'https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id),
+                    headers=headers).content.decode('utf-8'))['timezone']
+                print(timezone)
+                d1 = datetime.strptime(date1 + '-00', '%Y-%m-%d-%H')
+                timezone = pytz.timezone(timezone)
+                d1 = timezone.localize(d1)
+                time_offset = str(d1)[19:]
 
-        date_field = 'serverDate'
-        table = 'CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
+                if time_offset[0] == '+':
+                    relative_date1=str(datetime.strptime(date1 + '-00', '%Y-%m-%d-%H') - timedelta(
+                                hours=int(time_offset[2]) - 3))
+                    relative_date2=str(datetime.strptime(date2 + '-00', '%Y-%m-%d-%H') - timedelta(
+                                hours=int(time_offset[2]) - 3))
+                else:
+                    relative_date1 = str(datetime.strptime(date1 + '-00', '%Y-%m-%d-%H') - timedelta(
+                        hours=-int(time_offset[2]) - 3))
+                    relative_date2 = str(datetime.strptime(date2 + '-00', '%Y-%m-%d-%H') - timedelta(
+                        hours=-int(time_offset[2]) - 3))
+
+                date_field='toDateTime(serverTimestamp)'
+            except:
+                relative_date1=date1
+                relative_date2 = date2
+                date_field = 'serverDate'
+            try:
+                if json.loads(get_clickhouse_data(
+                        'SELECT idSite FROM CHdatabase.hits_with_visits WHERE idSite={idSite} FORMAT JSON'.format(
+                                idSite=json.loads(requests.get(
+                                        'https://s.analitika.online/api/profiles/{profile_id}/'.format(
+                                                profile_id=profile_id), headers=headers).content.decode('utf-8'))[
+                                    'site_db_id']), 'http://85.143.172.199:8123'))['data'] == []:
+                    filt = 'AND 0'
+                else:
+                    filt = filt + 'AND idSite==' + str(json.loads(requests.get(
+                        'https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id),
+                        headers=headers).content.decode('utf-8'))['site_db_id'])
+            except:
+                filt = 'AND 0'
+        except:
+            pass
+            relative_date1=date1
+            relative_date2= date2
+            date_field = 'serverDate'
+
+        table = 'CHdatabase.hits_with_visits'
         list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
                        'AdPosition', 'AdPositionType', 'AdRegionId', 'AdRetargetindId', 'AdPlacement', 'AdTargetId', 'AdvertisingSystem', 'DRF', 'campaignContent',
                        'campaignKeyword', 'campaignMedium', 'campaignName', 'campaignSource']
         is_ad=False
-        #Выбираем таблицу
+        # Выбираем таблицу
         for metr in metrics:
-            if metr in ['cost','impressions','clicks']:
-                table="""(SELECT
-                idSite,idVisit,visitIp,visitorId,goalConversions,siteCurrency,siteCurrencySymbol,serverDate,visitServerHour,lastActionTimestamp,
-                lastActionDateTime,userId,visitorType,visitorTypeIcon,visitConverted,visitConvertedIcon,visitCount,firstActionTimestamp,
-                visitEcommerceStatus,visitEcommerceStatusIcon,daysSinceFirstVisit,daysSinceLastEcommerceOrder,visitDuration,visitDurationPretty,
-                searches,actions,interactions,referrerType,referrerTypeName,referrerName,referrerKeyword,referrerKeywordPosition,referrerUrl,
-                referrerSearchEngineUrl,referrerSearchEngineIcon,languageCode,language,deviceType,deviceTypeIcon,deviceBrand,deviceModel,operatingSystem,
-                operatingSystemName,operatingSystemIcon,operatingSystemCode,operatingSystemVersion,browserFamily,browserFamilyDescription,browser,browserName,
-                browserIcon,browserCode,browserVersion,events,continent,continentCode,country,countryCode,countryFlag,region,regionCode,city,location,latitude,
-                longitude,visitLocalTime,visitLocalHour,daysSinceLastVisit,customVariables,resolution,plugins,pluginsIcons,provider,providerName,providerUrl,dimension1,
-                campaignId,campaignContent,campaignKeyword,campaignMedium,campaignName,campaignSource,serverTimestamp,serverTimePretty,serverDatePretty,
-                serverDatePrettyFirstAction,serverTimePrettyFirstAction,totalEcommerceRevenue,totalEcommerceConversions,totalEcommerceItems,totalAbandonedCartsRevenue,
-                totalAbandonedCarts,totalAbandonedCartsItems,AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId,AdPosition,AdPositionType,AdRegionId,
-                AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF,Gclid,SmartClickId,decodedServerTimestamp,Cost,Clicks,Impressions,StatDate
-                FROM CHdatabase.visits
-                ALL LEFT JOIN CHdatabase.adstat USING {dimension})
-                ALL INNER JOIN CHdatabase.hits
-                USING idVisit"""
-                is_ad=True
-                break
-        for dim in dimensionslist:
-            if dim in ['Cost', 'Impressions', 'Clicks','StatDate']:
-                table = """(SELECT
-                    idSite,idVisit,visitIp,visitorId,goalConversions,siteCurrency,siteCurrencySymbol,serverDate,visitServerHour,lastActionTimestamp,
-                    lastActionDateTime,userId,visitorType,visitorTypeIcon,visitConverted,visitConvertedIcon,visitCount,firstActionTimestamp,
-                    visitEcommerceStatus,visitEcommerceStatusIcon,daysSinceFirstVisit,daysSinceLastEcommerceOrder,visitDuration,visitDurationPretty,
-                    searches,actions,interactions,referrerType,referrerTypeName,referrerName,referrerKeyword,referrerKeywordPosition,referrerUrl,
-                    referrerSearchEngineUrl,referrerSearchEngineIcon,languageCode,language,deviceType,deviceTypeIcon,deviceBrand,deviceModel,operatingSystem,
-                    operatingSystemName,operatingSystemIcon,operatingSystemCode,operatingSystemVersion,browserFamily,browserFamilyDescription,browser,browserName,
-                    browserIcon,browserCode,browserVersion,events,continent,continentCode,country,countryCode,countryFlag,region,regionCode,city,location,latitude,
-                    longitude,visitLocalTime,visitLocalHour,daysSinceLastVisit,customVariables,resolution,plugins,pluginsIcons,provider,providerName,providerUrl,dimension1,
-                    campaignId,campaignContent,campaignKeyword,campaignMedium,campaignName,campaignSource,serverTimestamp,serverTimePretty,serverDatePretty,
-                    serverDatePrettyFirstAction,serverTimePrettyFirstAction,totalEcommerceRevenue,totalEcommerceConversions,totalEcommerceItems,totalAbandonedCartsRevenue,
-                    totalAbandonedCarts,totalAbandonedCartsItems,AdCampaignId,AdBannerId,AdChannelId,AdDeviceType,AdGroupId,AdKeywordId,AdPosition,AdPositionType,AdRegionId,
-                    AdRetargetindId,AdPlacement,AdTargetId,AdvertisingSystem,DRF,Gclid,SmartClickId,decodedServerTimestamp,Cost,Clicks,Impressions,StatDate
-                    FROM CHdatabase.visits
-                    ALL LEFT JOIN CHdatabase.adstat USING {dimension})
-                    ALL INNER JOIN CHdatabase.hits
-                    USING idVisit"""
+            if metr in ['cost', 'impressions', 'clicks']:
+                table = "CHdatabase.hits_with_visits ALL LEFT JOIN CHdatabase.adstat USING {dimension}"
                 is_ad = True
                 break
+        for dim in dimensionslist:
+            if dim in ['Cost', 'Impressions', 'Clicks', 'StatDate']:
+                table = "CHdatabase.hits_with_visits ALL LEFT JOIN CHdatabase.adstat USING {dimension}"
+                is_ad = True
+                break
+
+
 
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
@@ -1699,12 +1680,12 @@ def diagram_stat(request):
         #Добавляем в выходной словарь параметр counts
         resp={}#Выходной словарь
         resp['counts'] = {}
-        resp['counts']=AddCounts(date1,date2,dimension_counts,filt,sort_order,table)
+        resp['counts']=AddCounts(relative_date1,relative_date2,dimension_counts,filt,sort_order,table)
 
         # Добавляем в выходной словарь параметр metric_sums
         resp['metric_sums']={}
         resp['metric_sums']['dates'] = AddMetricSums(date1,date2,metric_counts_list,filt,metrics,sort_order,table)
-        stats=AddStats2(dimensionslist,dimensionslist_with_aliases,metric_counts,filt,limit,having,date1,date2,metrics,table)
+        stats=AddStats2(dimensionslist,dimensionslist_with_aliases,metric_counts,filt,limit,having,relative_date1,relative_date2,metrics,table)
         # Добавляем stats
         resp['stats']=stats
         pprint.pprint(resp)
