@@ -410,7 +410,8 @@ def CHapi(request):
 
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm)
-            for i2 in array_dates[MaxLenNum(array_dates)][:int(lim)]:
+
+            for i2 in array_dates[MaxLenNum(array_dates)][:lim]:
                 stat_dict = {'label': i2[dimensionslist_with_segments[n + 1]],
                              'segment':'{label}=={value}'.format(label=dimensionslist_with_segments[n + 1]
                                                                  ,value=i2[dimensionslist_with_segments[n + 1]])}
@@ -757,7 +758,7 @@ def CHapi(request):
             dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1)
 
                 #определим самый большой список в array_dates
-            for i in array_dates[MaxLenNum(array_dates)][:int(lim)]:
+            for i in array_dates[MaxLenNum(array_dates)][:lim]:
                 if search_pattern.lower() not in str(i[dim[0]]).lower():
                     continue
                 stat_dict = {'label': i[dim[0]],
@@ -1014,10 +1015,11 @@ def CHapi(request):
             offset='0'
         #если в запросе не указан лимит, зададим его путой строкой, если указан, составим строку LIMIT...
         try:
-            lim=json.loads(request.body.decode('utf-8'))['limit']
+            lim=int(json.loads(request.body.decode('utf-8'))['limit'])
             limit = 'LIMIT '+str(offset)+','+str(json.loads(request.body.decode('utf-8'))['limit'])
         except:
             limit=''
+            lim=None
 
         period = json.loads(request.body.decode('utf-8'))['periods']
         try:
