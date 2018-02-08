@@ -229,11 +229,11 @@ def CHapi(request):
             array_dates = []
             updimensions = []
             seg = json.loads(requests.get(
-                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dimensionslist_with_segments[n+1][num][7:])),
+                'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dimensionslist_with_segments[n+1][num][7:])),
                 headers=headers).content.decode('utf-8'))['real_definition']
             seg_filt = seg.partition("==")[0] + "=='" + seg.partition("==")[2] + "'"
             seg_label = json.loads(requests.get(
-                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dimensionslist_with_segments[n+1][num][7:])),
+                'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dimensionslist_with_segments[n+1][num][7:])),
                 headers=headers).content.decode('utf-8'))['name']
             updimensions.append(seg_filt)
             updimensions.append(seg_filt)
@@ -287,11 +287,11 @@ def CHapi(request):
             array_dates = []
             updimensions = []
             seg = json.loads(requests.get(
-                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dimensionslist_with_segments[n+1][7:])),
+                'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dimensionslist_with_segments[n+1][7:])),
                 headers=headers).content.decode('utf-8'))['real_definition']
             seg_filt = seg.partition("==")[0] + "=='" + seg.partition("==")[2] + "'"
             seg_label = json.loads(requests.get(
-                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dimensionslist_with_segments[n+1][7:])),
+                'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dimensionslist_with_segments[n+1][7:])),
                 headers=headers).content.decode('utf-8'))['name']
             updimensions.append(seg_filt)
             updimensions.append(seg_filt)
@@ -443,7 +443,7 @@ def CHapi(request):
         a={}
         for dim_num in range(len(dimensionslist)):
             if dimensionslist[dim_num] not in list_of_adstat_par and is_ad:
-                tab='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
+                tab='CHdatabase.hits_with_visits'
             else:
                 tab=table
 
@@ -630,7 +630,7 @@ def CHapi(request):
             #сортировка по имени сегмента
             for i in dim[0]:
                 seg_label_list[int(i[7:])]=(json.loads(requests.get(
-                    'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(i[7:])),
+                    'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(i[7:])),
                     headers=headers).content.decode('utf-8'))['name'])
             if sort_order=='desc':
                 seg_label_list=sorted(seg_label_list,reverse=True)
@@ -643,10 +643,10 @@ def CHapi(request):
             stats.append(AddMetricSumsWithFilt(period, metric_counts, filt, metrics, sort_order, table))
             array_dates = []
             updimensions = []
-            seg=json.loads(requests.get('https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[0][7:])),
+            seg=json.loads(requests.get('https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dim[0][7:])),
                                 headers=headers).content.decode('utf-8'))['real_definition']
             seg_filt=seg.partition("==")[0]+"=='"+seg.partition("==")[2]+"'"
-            seg_label=json.loads(requests.get('https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[0][7:])),
+            seg_label=json.loads(requests.get('https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dim[0][7:])),
                                 headers=headers).content.decode('utf-8'))['name']
             for date in relative_period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
@@ -916,7 +916,7 @@ def CHapi(request):
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
-            'Authorization': 'JWT eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxMSwiZW1haWwiOiIiLCJleHAiOjE0NzU3NjQwODAsInVzZXJuYW1lIjoiYXBpIn0.2Pj7lqRxuB6aBd4qgeMCaE_O5qIkm4QDmepcTwioqgA',
+            'Authorization': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxOSwiZW1haWwiOiIiLCJ1c2VybmFtZSI6ImFydHVyIiwiZXhwIjoxNTE4MTIxNDIyfQ._V0PYXMrE2pJlHlkMtZ_c-_p0y0MIKsv8o5jzR5llpY',
             'Content-Type': 'application/json'}
         # Парсинг json
         try:
@@ -1049,7 +1049,7 @@ def CHapi(request):
             profile_id=json.loads(request.body.decode('utf-8'))['profile_id']
             try:
                 timezone = json.loads(requests.get(
-                    'https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id),
+                    'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
                     headers=headers).content.decode('utf-8'))['timezone']
                 date1 = datetime.strptime(period[0]['date1'] + '-00', '%Y-%m-%d-%H')
                 timezone = pytz.timezone(timezone)
@@ -1077,13 +1077,13 @@ def CHapi(request):
                 if json.loads(get_clickhouse_data(
                         'SELECT idSite FROM CHdatabase.hits_with_visits WHERE idSite={idSite} FORMAT JSON'.format(
                                 idSite=json.loads(requests.get(
-                                        'https://s.analitika.online/api/profiles/{profile_id}/'.format(
+                                        'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(
                                                 profile_id=profile_id), headers=headers).content.decode('utf-8'))[
                                     'site_db_id']), 'http://85.143.172.199:8123'))['data'] == []:
                     filt = 'AND 0'
                 else:
                     filt = filt + 'AND idSite==' + str(json.loads(requests.get(
-                        'https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id),
+                        'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
                         headers=headers).content.decode('utf-8'))['site_db_id'])
             except:
                 filt = 'AND 0'
@@ -1127,7 +1127,7 @@ def CHapi(request):
         # Заполнение таблицы с рекламной статистикой
         load_query = "INSERT INTO CHdatabase.adstat VALUES "
 
-        for part in json.loads(requests.get('https://s.analitika.online/api/ad_stat/', headers=headers).content.decode('utf-8'))['results']:
+        for part in json.loads(requests.get('https://s.analitika.online/api/ad_stat/?all=1', headers=headers).content.decode('utf-8'))['results']:
             query = load_query + "(" + str(list(part.values()))[1:len(str(list(part.values()))) - 1] + ")"
             query = query.replace("None", "'none'")
             #get_clickhouse_data(query, 'http://85.143.172.199:8123')
@@ -1388,11 +1388,11 @@ def diagram_stat(request):
         for dim in dimensionslist_with_segments:
             if 'segment' in dim:
                 seg = json.loads(requests.get(
-                    'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[7:])),
+                    'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dim[7:])),
                     headers=headers).content.decode('utf-8'))['real_definition']
                 seg_filt = seg.partition("==")[0] + "=='" + seg.partition("==")[2] + "'"
                 seg_label = json.loads(requests.get(
-                    'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(dim[7:])),
+                    'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dim[7:])),
                     headers=headers).content.decode('utf-8'))['name']
                 q = """
                         SELECT {dimensions},[{metric_counts}] as metrics
@@ -1496,7 +1496,7 @@ def diagram_stat(request):
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
-            'Authorization': 'JWT eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxMSwiZW1haWwiOiIiLCJleHAiOjE0NzU3NjQwODAsInVzZXJuYW1lIjoiYXBpIn0.2Pj7lqRxuB6aBd4qgeMCaE_O5qIkm4QDmepcTwioqgA',
+            'Authorization': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxOSwiZW1haWwiOiIiLCJ1c2VybmFtZSI6ImFydHVyIiwiZXhwIjoxNTE4MTIxNDIyfQ._V0PYXMrE2pJlHlkMtZ_c-_p0y0MIKsv8o5jzR5llpY',
             'Content-Type': 'application/json'}
         # Парсинг json
         try:
@@ -1604,7 +1604,7 @@ def diagram_stat(request):
             try:
                 #Определяем относительное время(с учетом часового пояса)
                 timezone = json.loads(requests.get(
-                    'https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id),
+                    'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
                     headers=headers).content.decode('utf-8'))['timezone']
                 print(timezone)
                 d1 = datetime.strptime(date1 + '-00', '%Y-%m-%d-%H')
@@ -1632,13 +1632,13 @@ def diagram_stat(request):
                 if json.loads(get_clickhouse_data(
                         'SELECT idSite FROM CHdatabase.hits_with_visits WHERE idSite={idSite} FORMAT JSON'.format(
                                 idSite=json.loads(requests.get(
-                                        'https://s.analitika.online/api/profiles/{profile_id}/'.format(
+                                        'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(
                                                 profile_id=profile_id), headers=headers).content.decode('utf-8'))[
                                     'site_db_id']), 'http://85.143.172.199:8123'))['data'] == []:
                     filt = 'AND 0'
                 else:
                     filt = filt + 'AND idSite==' + str(json.loads(requests.get(
-                        'https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id),
+                        'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
                         headers=headers).content.decode('utf-8'))['site_db_id'])
             except:
                 filt = 'AND 0'
