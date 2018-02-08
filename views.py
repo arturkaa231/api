@@ -158,7 +158,7 @@ def CHapi(request):
                                                       sort_order=sort_order,
                                                       table=table.format(dimension=dim), date_filt=date_filt)
 
-        all_labeldicts = json.loads(get_clickhouse_data(q_all, 'http://85.143.172.199:8123'))['data']
+        all_labeldicts = json.loads(get_clickhouse_data(q_all, 'http://46.4.81.36:8123'))['data']
 
         all_label = []
         sorted_array = array_dates[0]
@@ -252,7 +252,7 @@ def CHapi(request):
                     date2=date['date2'], filt=filt,
                     table=table, date_field=date_field)
 
-                array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
                 # Если сегмент пуст, добавляем нулевые значение в dates
                 if array_dates[counter] == []:
                     empty_dict = {'label': seg_label,
@@ -309,7 +309,7 @@ def CHapi(request):
                     date1=date['date1'],
                     date2=date['date2'], filt=filt,
                     table=table, date_field=date_field)
-                array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
                 if array_dates[0]==[]:
                     empty_dict={'label':seg_label,
                                            'segment':seg}
@@ -369,7 +369,7 @@ def CHapi(request):
                                                              limit=limit,
                                                              table=table.format(dimension=using),
                                                              date_field=date_field)
-                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
             elif attribution_model == 'last_non-direct_interaction':
                 for date in period:
                     date0 = (datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
@@ -392,7 +392,7 @@ def CHapi(request):
                                                              limit=limit,
                                                              table=table.format(dimension=using),
                                                              date_field=date_field)
-                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
             else:
                 for date in period:
                     q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
@@ -408,7 +408,7 @@ def CHapi(request):
                                                                                having=having, table=table.format(dimension=using),
                                                                                date_field=date_field)
 
-                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm)
 
             for i2 in array_dates[MaxLenNum(array_dates)][:lim]:
@@ -495,7 +495,7 @@ def CHapi(request):
                                           date_filt=date_filt)
                 print(q)
             try:
-                a.update(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0])
+                a.update(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0])
             except:
                 a.update({'h'+dimensionslist[dim_num]:0})
         b = {}
@@ -567,14 +567,14 @@ def CHapi(request):
             #Проверка на существование записей, если их нет, возвращаем нули
             try:
                 """if metric_counts_visits != "":
-                    a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
-                    b = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+                    a = json.loads(get_clickhouse_data(q_total, 'http://46.4.81.36:8123'))['data'][0]
+                    b = json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0]
                 #Если запрошены показатели рекламной статистики то считаем для них metric_sums по таблице с статистикой
                 if metric_counts_stat != "":
-                    a.update(json.loads(get_clickhouse_data(q_total_stat, 'http://85.143.172.199:8123'))['data'][0])
-                    b.update(json.loads(get_clickhouse_data(q_stat, 'http://85.143.172.199:8123'))['data'][0])"""
-                a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
-                b = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+                    a.update(json.loads(get_clickhouse_data(q_total_stat, 'http://46.4.81.36:8123'))['data'][0])
+                    b.update(json.loads(get_clickhouse_data(q_stat, 'http://46.4.81.36:8123'))['data'][0])"""
+                a = json.loads(get_clickhouse_data(q_total, 'http://46.4.81.36:8123'))['data'][0]
+                b = json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0]
                 # Создаем словарь, ключи которого это элементы списка metrics
                 metric_dict = dict.fromkeys(metrics)
                 # Заполняем этот словарь полученными из базы данными
@@ -600,7 +600,7 @@ def CHapi(request):
                 date2=date['date2'], filt=filt,
                 table=table, date_field=date_field)
 
-            ar_d.append(json.loads(get_clickhouse_data(t, 'http://85.143.172.199:8123'))['data'])
+            ar_d.append(json.loads(get_clickhouse_data(t, 'http://46.4.81.36:8123'))['data'])
         counter=0
         for i in ar_d[0]:
             try:
@@ -660,7 +660,7 @@ def CHapi(request):
                     date1=date['date1'],
                     date2=date['date2'], filt=filt,
                     table=table, date_field=date_field)
-                array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
 
             counter=0
             for i in array_dates[0]:
@@ -719,7 +719,7 @@ def CHapi(request):
                                                   date2=date['date2'], filt=filt,sort_order=sort_order,limit=limit,
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
                     print(q)
-                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
             elif  attribution_model=='last_non-direct_interaction':
                 for date in relative_period:
                     q = '''SELECT {dimension},{sum_metric_string}
@@ -739,7 +739,7 @@ def CHapi(request):
                                                   date2=date['date2'], filt=filt,sort_order=sort_order,limit=limit,
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
                     print(q)
-                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
             else:
                 for date in relative_period:
                     q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
@@ -753,7 +753,7 @@ def CHapi(request):
                                                   date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
                     print(q)
-                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
 
             dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1)
 
@@ -820,7 +820,7 @@ def CHapi(request):
                                                                                    date1=date['date1'],
                                                                                    date2=date['date2'], filt=filt,
                                                                                    table=table, date_field=date_field)
-                array_dates.append(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'])
+                array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
                 if array_dates[counter] == []:
                     empty_dict = {'label': seg_label,
                                   'segment': seg}
@@ -880,7 +880,7 @@ def CHapi(request):
                 else:
                     try:#если значение в подфильтре целочисленное, то не добавляем кавычки
                         int(sub_str.partition(j)[2])
-                        json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://85.143.172.199:8123'))
+                        json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://46.4.81.36:8123'))
                         sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
                     except:
                         if sub_str.partition(j)[0] in ['day_of_week_code','month_code',"year","minute","second"]:
@@ -1083,14 +1083,14 @@ def CHapi(request):
                                 idSite=json.loads(requests.get(
                                         'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(
                                                 profile_id=profile_id), headers=headers).content.decode('utf-8'))[
-                                    'site_db_id']), 'http://85.143.172.199:8123'))['data'] == []:
-                    filt = 'AND 0'
+                                    'site_db_id']), 'http://46.4.81.36:8123'))['data'] == []:
+                    filt = ' AND 0'
                 else:
-                    filt = filt + 'AND idSite==' + str(json.loads(requests.get(
+                    filt = filt + ' AND idSite==' + str(json.loads(requests.get(
                         'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
                         headers=headers).content.decode('utf-8'))['site_db_id'])
             except:
-                filt = 'AND 0'
+                filt = ' AND 0'
         except:
             pass
             relative_period=period
@@ -1134,7 +1134,7 @@ def CHapi(request):
         #for part in json.loads(requests.get('https://s.analitika.online/api/ad_stat/?all=1', headers=headers).content.decode('utf-8'))['results']:
             #query = load_query + "(" + str(list(part.values()))[1:len(str(list(part.values()))) - 1] + ")"
             #query = query.replace("None", "'none'")
-            #get_clickhouse_data(query, 'http://85.143.172.199:8123')
+            #get_clickhouse_data(query, 'http://46.4.81.36:8123')
         #Фильтр по всем датам
         date_filt = []
         for dates in relative_period:
@@ -1232,14 +1232,14 @@ def segment_stat(request):
         SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM CHdatabase.visits WHERE serverDate BETWEEN '{date1}' AND '{date2}' FORMAT JSON
         """.format(date1=response['date1'],date2=response['date2'])
         try:
-            total=json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
+            total=json.loads(get_clickhouse_data(q_total, 'http://46.4.81.36:8123'))['data'][0]
         except:
             total={'visitors':0,'visits':0}
         q = """
                 SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM CHdatabase.visits WHERE serverDate BETWEEN '{date1}' AND '{date2}' AND {filter} FORMAT JSON
                 """.format(date1=response['date1'], date2=response['date2'],filter=filter)
         try:
-            with_filter = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+            with_filter = json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0]
         except:
             with_filter = {'visitors': 0, 'visits': 0}
         visitors={'total_sum':total['visitors'],'sum':with_filter['visitors']}
@@ -1272,7 +1272,7 @@ def diagram_stat(request):
                                sort_order=sort_order,table=tab.format(dimension=dimensionslist[dim_num]),date_field=date_field)
 
             try:
-                a.update(json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0])
+                a.update(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0])
             except:
                 a.update({'h'+dimensionslist[dim_num]:0})
         b = {}
@@ -1341,12 +1341,12 @@ def diagram_stat(request):
             #Проверка на существование записей, если их нет, возвращаем нули
         try:
             if metric_counts_visits != "":
-                a = json.loads(get_clickhouse_data(q_total, 'http://85.143.172.199:8123'))['data'][0]
-                b = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data'][0]
+                a = json.loads(get_clickhouse_data(q_total, 'http://46.4.81.36:8123'))['data'][0]
+                b = json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0]
             # Если запрошены показатели рекламной статистики то считаем для них metric_sums по таблице с статистикой
             if metric_counts_stat != "":
-                a.update(json.loads(get_clickhouse_data(q_total_stat, 'http://85.143.172.199:8123'))['data'][0])
-                b.update(json.loads(get_clickhouse_data(q_stat, 'http://85.143.172.199:8123'))['data'][0])
+                a.update(json.loads(get_clickhouse_data(q_total_stat, 'http://46.4.81.36:8123'))['data'][0])
+                b.update(json.loads(get_clickhouse_data(q_stat, 'http://46.4.81.36:8123'))['data'][0])
                 # Создаем словарь, ключи которого это элементы списка metrics
             metric_dict = dict.fromkeys(metrics)
                 # Заполняем этот словарь полученными из базы данными
@@ -1373,7 +1373,7 @@ def diagram_stat(request):
         FORMAT JSON
         """.format(dimensions_with_aliases=','.join(dim_with_aliases),date1=date1,date2=date2,filt=filt,date_field=date_field,table=table.format(dimension=','.join(dimensionslist)),limit=limit,sort_column=sort_column,sort_order=sort_order,metric_counts=metric_counts,dimensions=','.join(dimensionslist))
         print(q)
-        stats=json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data']
+        stats=json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data']
         #Если показатеь один, обрабатываем ошибку
 
         try:
@@ -1410,7 +1410,7 @@ def diagram_stat(request):
                                    sort_column=sort_column, sort_order=sort_order, metric_counts=metric_counts,
                                    dimensions=','.join(dimensionslist),seg_filt=seg_filt)
 
-                stat_with_segment = json.loads(get_clickhouse_data(q, 'http://85.143.172.199:8123'))['data']
+                stat_with_segment = json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data']
 
                 for stat in stat_with_segment:
                     metr = {}
@@ -1464,7 +1464,7 @@ def diagram_stat(request):
                 else:
                     try:#если значение в подфильтре целочисленное, то не добавляем кавычки
                         int(sub_str.partition(j)[2])
-                        json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://85.143.172.199:8123'))
+                        json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://46.4.81.36:8123'))
                         sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
                     except:
                         if sub_str.partition(j)[0] in ['day_of_week_code','month_code',"year","minute","second"]:
@@ -1638,14 +1638,14 @@ def diagram_stat(request):
                                 idSite=json.loads(requests.get(
                                         'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(
                                                 profile_id=profile_id), headers=headers).content.decode('utf-8'))[
-                                    'site_db_id']), 'http://85.143.172.199:8123'))['data'] == []:
-                    filt = 'AND 0'
+                                    'site_db_id']), 'http://46.4.81.36:8123'))['data'] == []:
+                    filt = ' AND 0'
                 else:
-                    filt = filt + 'AND idSite==' + str(json.loads(requests.get(
+                    filt = filt + ' AND idSite==' + str(json.loads(requests.get(
                         'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
                         headers=headers).content.decode('utf-8'))['site_db_id'])
             except:
-                filt = 'AND 0'
+                filt = ' AND 0'
         except:
             pass
             relative_date1=date1
