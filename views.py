@@ -916,7 +916,7 @@ def CHapi(request):
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
-            'Authorization': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxOSwiZW1haWwiOiIiLCJ1c2VybmFtZSI6ImFydHVyIiwiZXhwIjoxNTE4MTIxNDIyfQ._V0PYXMrE2pJlHlkMtZ_c-_p0y0MIKsv8o5jzR5llpY',
+            'Authorization': 'JWT eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxOSwiZW1haWwiOiIiLCJ1c2VybmFtZSI6ImFydHVyIiwiZXhwIjoxNTE4MTIxNDIyfQ._V0PYXMrE2pJlHlkMtZ_c-_p0y0MIKsv8o5jzR5llpY',
             'Content-Type': 'application/json'}
         # Парсинг json
         try:
@@ -1048,9 +1048,13 @@ def CHapi(request):
         try:
             profile_id=json.loads(request.body.decode('utf-8'))['profile_id']
             try:
+                print(json.loads(requests.get(
+                    'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
+                    headers=headers).content.decode('utf-8')))
                 timezone = json.loads(requests.get(
                     'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
                     headers=headers).content.decode('utf-8'))['timezone']
+
                 date1 = datetime.strptime(period[0]['date1'] + '-00', '%Y-%m-%d-%H')
                 timezone = pytz.timezone(timezone)
                 date1 = timezone.localize(date1)
@@ -1127,9 +1131,9 @@ def CHapi(request):
         # Заполнение таблицы с рекламной статистикой
         load_query = "INSERT INTO CHdatabase.adstat VALUES "
 
-        for part in json.loads(requests.get('https://s.analitika.online/api/ad_stat/?all=1', headers=headers).content.decode('utf-8'))['results']:
-            query = load_query + "(" + str(list(part.values()))[1:len(str(list(part.values()))) - 1] + ")"
-            query = query.replace("None", "'none'")
+        #for part in json.loads(requests.get('https://s.analitika.online/api/ad_stat/?all=1', headers=headers).content.decode('utf-8'))['results']:
+            #query = load_query + "(" + str(list(part.values()))[1:len(str(list(part.values()))) - 1] + ")"
+            #query = query.replace("None", "'none'")
             #get_clickhouse_data(query, 'http://85.143.172.199:8123')
         #Фильтр по всем датам
         date_filt = []
@@ -1496,7 +1500,7 @@ def diagram_stat(request):
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
-            'Authorization': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxOSwiZW1haWwiOiIiLCJ1c2VybmFtZSI6ImFydHVyIiwiZXhwIjoxNTE4MTIxNDIyfQ._V0PYXMrE2pJlHlkMtZ_c-_p0y0MIKsv8o5jzR5llpY',
+            'Authorization': 'JWT eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxOSwiZW1haWwiOiIiLCJ1c2VybmFtZSI6ImFydHVyIiwiZXhwIjoxNTE4MTIxNDIyfQ._V0PYXMrE2pJlHlkMtZ_c-_p0y0MIKsv8o5jzR5llpY',
             'Content-Type': 'application/json'}
         # Парсинг json
         try:
