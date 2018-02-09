@@ -1048,9 +1048,7 @@ def CHapi(request):
         try:
             profile_id=json.loads(request.body.decode('utf-8'))['profile_id']
             try:
-                print(json.loads(requests.get(
-                    'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
-                    headers=headers).content.decode('utf-8')))
+
                 timezone = json.loads(requests.get(
                     'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
                     headers=headers).content.decode('utf-8'))['timezone']
@@ -1061,17 +1059,22 @@ def CHapi(request):
                 time_offset = str(date1)[19:]
                 relative_period = []
                 for date in period:
+                    # вторую дату увеличиваем на день
+                    date2=(datetime.strptime(date['date2'], '%Y-%m-%d') - timedelta(
+                                days=-1)).strftime('%Y-%m-%d')
+
+
                     if time_offset[0] == '+':
                         relative_period.append({'date1': str(
                             datetime.strptime(date['date1'] + '-00', '%Y-%m-%d-%H') - timedelta(
                                 hours=int(time_offset[2]) - 3)), 'date2': str(
-                            datetime.strptime(date['date2'] + '-00', '%Y-%m-%d-%H') - timedelta(
+                            datetime.strptime(date2 + '-00', '%Y-%m-%d-%H') - timedelta(
                                 hours=int(time_offset[2]) - 3))})
                     else:
                         relative_period.append({'date1': str(
                             datetime.strptime(date['date1'] + '-00', '%Y-%m-%d-%H') - timedelta(
                                 hours=-int(time_offset[2]) - 3)),
-                            'date2': str(datetime.strptime(date['date2'] + '-00', '%Y-%m-%d-%H') - timedelta(
+                            'date2': str(datetime.strptime(date2 + '-00', '%Y-%m-%d-%H') - timedelta(
                                 hours=-int(time_offset[2]) - 3))})
                 date_field='toDateTime(serverTimestamp)'
             except:
@@ -1092,7 +1095,6 @@ def CHapi(request):
             except:
                 filt = ' AND 0'
         except:
-            pass
             relative_period=period
             date_field = 'serverDate'
 
@@ -1217,6 +1219,9 @@ def segment_stat(request):
         end_filt = end_filt.replace('?', ',')
         return end_filt
     if request.method=='GET':
+        headers = {
+            'Authorization': 'JWT eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxOSwiZW1haWwiOiIiLCJ1c2VybmFtZSI6ImFydHVyIiwiZXhwIjoxNTE4MTIxNDIyfQ._V0PYXMrE2pJlHlkMtZ_c-_p0y0MIKsv8o5jzR5llpY',
+            'Content-Type': 'application/json'}
         response=dict(request.GET)
         for key in  response.keys():
             response[key]=response[key][0]
@@ -1228,16 +1233,70 @@ def segment_stat(request):
                 filter=FilterParse(response['filter'])
         except:
             filter=1
+        try:
+            profile_id=response['profile_id']
+            try:
+                #Определяем относительное время(с учетом часового пояса)
+                timezone = json.loads(requests.get(
+                    'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
+                    headers=headers).content.decode('utf-8'))['timezone']
+
+                d1 = datetime.strptime(response['date1'] + '-00', '%Y-%m-%d-%H')
+                timezone = pytz.timezone(timezone)
+                d1 = timezone.localize(d1)
+                time_offset = str(d1)[19:]
+                #Вторую дату увеличиваем на день
+                d2 = (datetime.strptime(response['date2'], '%Y-%m-%d') - timedelta(
+                        days=-1)).strftime('%Y-%m-%d')
+
+                if time_offset[0] == '+':
+                    relative_date1=str(datetime.strptime(response['date1'] + '-00', '%Y-%m-%d-%H') - timedelta(
+                                hours=int(time_offset[2]) - 3))
+                    relative_date2=str(datetime.strptime(d2 + '-00', '%Y-%m-%d-%H') - timedelta(
+                                hours=int(time_offset[2]) - 3))
+                else:
+                    relative_date1 = str(datetime.strptime(response['date1'] + '-00', '%Y-%m-%d-%H') - timedelta(
+                        hours=-int(time_offset[2]) - 3))
+                    relative_date2 = str(datetime.strptime(d2 + '-00', '%Y-%m-%d-%H') - timedelta(
+                        hours=-int(time_offset[2]) - 3))
+
+                date_field='toDateTime(serverTimestamp)'
+            except:
+                relative_date1=response['date1']
+                relative_date2 = response['date2']
+                date_field = 'serverDate'
+                site_filter = ' 1'
+            try:
+                if json.loads(get_clickhouse_data(
+                        'SELECT idSite FROM CHdatabase.hits_with_visits WHERE idSite={idSite} FORMAT JSON'.format(
+                                idSite=json.loads(requests.get(
+                                        'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(
+                                                profile_id=profile_id), headers=headers).content.decode('utf-8'))[
+                                    'site_db_id']), 'http://46.4.81.36:8123'))['data'] == []:
+                    site_filter = ' 0'
+                else:
+                    site_filter = ' idSite==' + str(json.loads(requests.get(
+                        'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
+                        headers=headers).content.decode('utf-8'))['site_db_id'])
+            except:
+                site_filter = ' 0'
+        except:
+            site_filter =' 1'
+            relative_date1=response['date1']
+            relative_date2= response['date2']
+            date_field = 'serverDate'
         q_total="""
-        SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM CHdatabase.visits WHERE serverDate BETWEEN '{date1}' AND '{date2}' FORMAT JSON
-        """.format(date1=response['date1'],date2=response['date2'])
+        SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM CHdatabase.hits_with_visits WHERE {date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filter} FORMAT JSON
+        """.format(date1=relative_date1,date2=relative_date2,date_field=date_field,site_filter=site_filter)
+        print(q_total)
         try:
             total=json.loads(get_clickhouse_data(q_total, 'http://46.4.81.36:8123'))['data'][0]
         except:
             total={'visitors':0,'visits':0}
         q = """
-                SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM CHdatabase.visits WHERE serverDate BETWEEN '{date1}' AND '{date2}' AND {filter} FORMAT JSON
-                """.format(date1=response['date1'], date2=response['date2'],filter=filter)
+                SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM CHdatabase.hits_with_visits WHERE {date_field} BETWEEN '{date1}' AND '{date2}' AND {filter} AND {site_filter} FORMAT JSON
+                """.format(date1=relative_date1, date2=relative_date2,filter=filter,date_field=date_field,site_filter=site_filter)
+        print(q)
         try:
             with_filter = json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0]
         except:
@@ -1610,21 +1669,24 @@ def diagram_stat(request):
                 timezone = json.loads(requests.get(
                     'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
                     headers=headers).content.decode('utf-8'))['timezone']
-                print(timezone)
+
                 d1 = datetime.strptime(date1 + '-00', '%Y-%m-%d-%H')
                 timezone = pytz.timezone(timezone)
                 d1 = timezone.localize(d1)
                 time_offset = str(d1)[19:]
+                #Вторую дату увеличиваем на день
+                d2 = (datetime.strptime(date2, '%Y-%m-%d') - timedelta(
+                        days=-1)).strftime('%Y-%m-%d')
 
                 if time_offset[0] == '+':
                     relative_date1=str(datetime.strptime(date1 + '-00', '%Y-%m-%d-%H') - timedelta(
                                 hours=int(time_offset[2]) - 3))
-                    relative_date2=str(datetime.strptime(date2 + '-00', '%Y-%m-%d-%H') - timedelta(
+                    relative_date2=str(datetime.strptime(d2 + '-00', '%Y-%m-%d-%H') - timedelta(
                                 hours=int(time_offset[2]) - 3))
                 else:
                     relative_date1 = str(datetime.strptime(date1 + '-00', '%Y-%m-%d-%H') - timedelta(
                         hours=-int(time_offset[2]) - 3))
-                    relative_date2 = str(datetime.strptime(date2 + '-00', '%Y-%m-%d-%H') - timedelta(
+                    relative_date2 = str(datetime.strptime(d2 + '-00', '%Y-%m-%d-%H') - timedelta(
                         hours=-int(time_offset[2]) - 3))
 
                 date_field='toDateTime(serverTimestamp)'
@@ -1647,7 +1709,6 @@ def diagram_stat(request):
             except:
                 filt = ' AND 0'
         except:
-            pass
             relative_date1=date1
             relative_date2= date2
             date_field = 'serverDate'
