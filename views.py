@@ -410,6 +410,16 @@ def CHapi(request):
 
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm)
+            empties = []
+            for i in array_dates:
+                empty_d = True
+                for j in i:
+                    if len(list(j.keys())) != 1:
+                        empty_d = False
+                        break
+                empties.append(empty_d)
+            if empties.count(True) == len(empties):
+                return sub
 
             for i2 in array_dates[MaxLenNum(array_dates)][:lim]:
                 stat_dict = {'label': i2[dimensionslist_with_segments[n + 1]],
@@ -756,6 +766,19 @@ def CHapi(request):
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
 
             dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1)
+            #Проверка на выдачу только нулей в показателях. Если тлько нули возвращаем пустой список
+            empties=[]
+            for i in array_dates:
+                empty_d=True
+                for j in i:
+                    if len(list(j.keys()))!=1:
+                        empty_d=False
+                        break
+                empties.append(empty_d)
+            if empties.count(True)==len(empties):
+                return stats
+
+
 
                 #определим самый большой список в array_dates
             for i in array_dates[MaxLenNum(array_dates)][:lim]:
@@ -776,7 +799,7 @@ def CHapi(request):
                             metrics_dict[j]=0
 
                     dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
-
+                print(dates)
                 stat_dict['dates'] = dates
                 if len(dim) > 1:
                     # Добавляем подуровень. Если параметр вычисляемый то подставляем его название из словаря time_dimensions_dict
@@ -931,11 +954,7 @@ def CHapi(request):
                 lang='eng'
         except:
             lang = "ru"
-        #сортировка по переданному показателю
-        try:
-            sort_column = json.loads(request.body.decode('utf-8'))['sort_column']
-        except:
-            sort_column=""
+
         dimensionslist_with_segments=json.loads(request.body.decode('utf-8'))['dimensions']
         dimensionslist = []
         #Создание списка параметров без сегментов
@@ -1000,6 +1019,14 @@ def CHapi(request):
             dimensionslist_with_segments_and_aliases.append(d)
 
         metrics = json.loads(request.body.decode('utf-8'))['metrics']
+        print(metrics)
+        # сортировка по переданному показателю
+        try:
+            sort_column = json.loads(request.body.decode('utf-8'))['sort_column']
+        except:
+            sort_column = ""
+        if sort_column not in metrics:
+            metrics.append(sort_column)
         # строка  "sum(metric1),avg(metric2)...". если показатель относительный используется avg, если нет - sum
         sum_metric_string=[]
         for i in metrics:
