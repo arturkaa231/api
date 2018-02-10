@@ -24,7 +24,7 @@ def MetricCounts(metrics, headers):
             continue
         if 'nb_return_visitors_per_all_visitors'==i:
             metric_counts.append(
-                "if(uniq(visitorId)=0,0,floor(uniqIf(visitorId,visitorType='returning')*100/uniq(visitorId),2)) as {metric}".format(
+                "if(uniq(visitorId)=0,0,floor(CAST(uniq(visitorId)-uniqIf(visitorId,visitorType='new'),'Int')*100/uniq(visitorId),2)) as {metric}".format(
                     metric=i))
             continue
         if 'nb_visits_with_searches'==i:
@@ -100,22 +100,25 @@ def MetricCounts(metrics, headers):
                     metric=i))
             continue
         if 'bounce_count'==i:
-            metric_counts.append("CAST((uniqIf(idVisit,visitDuration=0),'Int') as {metric}".format(metric=i))
+            metric_counts.append("CAST(uniqIf(idVisit,visitDuration=0),'Int') as {metric}".format(metric=i))
             continue
         if 'calculated_metric' in i:
+
             calc_metr = json.loads(requests.get(
-                'https://s.analitika.online/api/reference/calculated_metrics?code=calculated_metric{num}'.format(
+                'https://s.analitika.online/api/reference/calculated_metrics/{num}/?all=1'.format(
                     num=int(i[17:])),
-                headers=headers).content.decode('utf-8'))['results'][0]['definition']
+                headers=headers).content.decode('utf-8'))['definition']
+
             calc_metr = calc_metr.replace('impressions', 'sum(Impressions}').replace('nb_actions_per_visit',"if(uniq(idVisit)=0,0,floor(count(*)/uniq(idVisit),2))")\
                     .replace('nb_downloas_per_visit',"if(uniq(idVisit)=0,0,floor(sum(Type='download')/uniq(idVisit),2))").replace('cost', 'sum(Cost)')\
-                    .replace('clicks', 'sum(Clicks)').replace('nb_visits_with_searches',"countIf(searches>0)").replace('nb_visits', 'uniq(idVisit)').replace('nb_actions','count(*)')\
-                    .replace('nb_visitors', 'uniq(visitorId)').replace('bounce_count','sum(visitDuration=0)').replace('bounce_rate','if(uniq(idVisit)=0,0,floor((sum(visitDuration=0)/uniq(idVisit))*100,2))')\
-                    .replace('nb_pageviews',"sum(Type='action')").replace('nb_conversions',"sum(Type='goal')").replace('nb_downloads',"sum(Type='download')")\
+                    .replace('clicks', "CAST(sum(Clicks),'Int')").replace('nb_visits_with_searches',"CAST(countIf(searches>0),'Int')").replace('nb_visits', "CAST(uniq(idVisit),'Int')").replace('nb_actions',"CAST(count(*),'Int')")\
+                    .replace('nb_visitors', "CAST(uniq(visitorId),'Int')").replace('bounce_count',"CAST(uniqIf(idVisit,visitDuration=0),'Int')").replace('bounce_rate','if(uniq(idVisit)=0,0,floor((uniqIf(idVisit,visitDuration=0)*100/uniq(idVisit)),2))')\
+                    .replace('nb_pageviews',"CAST(sum(Type='action'),'Int')").replace('nb_conversions',"CAST(sum(Type='goal'),'Int')").replace('nb_downloads',"CAST(sum(Type='download'),'Int')")\
                     .replace('avg_time_generation',"floor(avg(generationTimeMilliseconds)/1000,2)").replace('ctr',"if(sum(shows)=0,0,floor((sum(clicks)/sum(shows))*100,2))")\
                     .replace('nb_pageviews_per_visit',"floor(sum(Type='action')/uniq(idVisit),2)").replace('nb_new_visitors_per_all_visitors',"if(uniq(visitorId)=0,0,floor(uniqIf(visitorId,visitorType='new')*100/uniq(visitorId),2))")\
-                    .replace('nb_new_visitors',"uniqIf(visitorId,visitorType='new')").replace('nb_new_visits_per_all_visits',"if(uniq(idVisit)=0,0,floor(uniqIf(idVisit,visitorType='new')*100/uniq(idVisit),2))")\
-                    .replace('nb_new_visits',"uniqIf(idVisit,visitorType='new')").replace('nb_return_visitors_per_all_visitors',"if(uniq(visitorId)=0,0,floor(uniqIf(visitorId,visitorType='returning')*100/uniq(visitorId),2))").replace('nb_return_visitors',"uniq(visitorId)-uniqIf(visitorId,visitorType='new')")\
+                    .replace('nb_new_visitors',"CAST(uniqIf(visitorId,visitorType='new'),'Int')").replace('nb_new_visits_per_all_visits',"if(uniq(idVisit)=0,0,floor(uniqIf(idVisit,visitorType='new')*100/uniq(idVisit),2))")\
+                    .replace('nb_new_visits',"CAST(uniqIf(idVisit,visitorType='new'),'Int')").replace('nb_return_visitors_per_all_visitors',"if(uniq(visitorId)=0,0,floor(uniqIf(visitorId,visitorType='returning')*100/uniq(visitorId),2))")\
+                    .replace('nb_return_visitors',"uniq(visitorId)-uniqIf(visitorId,visitorType='new')")\
                     .replace('avg_visit_length',"if(uniq(idVisit)=0,0,floor(sum(visitDuration)/uniq(idVisit),2))").replace('nb_searches_visits_per_all_visits',"if(uniq(idVisit)=0,0,floor(countIf(searches>0)*100/uniq(idVisit),2))")\
                     .replace('nb_searches',"sum(searches)").replace('conversion_rate',"if(uniq(idVisit)=0,0,floor(sum(Type='goal')*100/uniq(idVisit),2))")
 
@@ -768,6 +771,7 @@ def CHapi(request):
             dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1)
             #Проверка на выдачу только нулей в показателях. Если тлько нули возвращаем пустой список
             empties=[]
+
             for i in array_dates:
                 empty_d=True
                 for j in i:
@@ -1025,7 +1029,7 @@ def CHapi(request):
             sort_column = json.loads(request.body.decode('utf-8'))['sort_column']
         except:
             sort_column = ""
-        if sort_column not in metrics:
+        if sort_column not in metrics and sort_column!="":
             metrics.append(sort_column)
         # строка  "sum(metric1),avg(metric2)...". если показатель относительный используется avg, если нет - sum
         sum_metric_string=[]
