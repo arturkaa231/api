@@ -151,13 +151,13 @@ def MetricCounts(metrics, headers):
 def CHapi(request):
     def datesdicts(array_dates, dim,dim_with_alias,table,date_filt,updm):
         q_all = '''SELECT {dimension_with_alias} FROM {table}
-                                           WHERE 1 {filt} AND {date_filt} AND {updm}
+                                           WHERE 1 {filt} AND {site_filt} AND {date_filt} AND {updm}
                                            GROUP BY {dimension}
                                            {limit}
                                            FORMAT JSON
                                            '''.format(dimension_with_alias=dim_with_alias,dimension=dim,updm=updm,
                                                       metric_counts=metric_counts,
-                                                      filt=filt, limit=limit,
+                                                      filt=filt, limit=limit,site_filt=site_filt,
                                                       sort_order=sort_order,
                                                       table=table.format(dimension=dim), date_filt=date_filt)
 
@@ -242,12 +242,12 @@ def CHapi(request):
             updimensions.append(seg_filt)
             updm = ' AND '.join(updimensions)
             counter=0
-            for date in period:
+            for date in relative_period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
-                                                                      WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {updimensions}
+                                                                      WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {updimensions}
                                                                       FORMAT JSON
                                                                     '''.format(
-                    label_val=seg_label,
+                    label_val=seg_label,site_filt=site_filt,
                     segment_val=seg,
                     updimensions=updm,
                     metric_counts=metric_counts,
@@ -299,15 +299,15 @@ def CHapi(request):
             updimensions.append(seg_filt)
             updimensions.append(seg_filt)
             updm = ' AND '.join(updimensions)
-            for date in period:
+            for date in relative_period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
-                                                                             WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt} AND {updm}
+                                                                             WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt} AND {updm}
                                                                              FORMAT JSON
                                                                            '''.format(
                     label_val=seg_label,
                     segment_val=seg,
                     seg_filt=seg_filt,
-                    updm=updm,
+                    updm=updm,site_filt=site_filt,
                     metric_counts=metric_counts,
                     date1=date['date1'],
                     date2=date['date2'], filt=filt,
@@ -351,14 +351,14 @@ def CHapi(request):
                 sort_column_in_query = sort_column
             using=using+','+dimension#поля, по которым необходимо join-ить таблицы, если запрошены параметры статистики
             if attribution_model == 'first_interaction':
-                for date in period:
+                for date in relative_period:
                     date0 = (datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
                     q = '''SELECT {dimension},{sum_metric_string}
                                FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
-                               WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                               WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
                                ALL INNER JOIN
-                               (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                               (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
                                USING visitorId
                                GROUP BY {dimension}
                                ORDER BY {sort_column} {sort_order}
@@ -369,19 +369,19 @@ def CHapi(request):
                                                              sum_metric_string=sum_metric_string,
                                                              date1=date['date1'], sort_column=sort_column_in_query,
                                                              date2=date['date2'], filt=filt, sort_order=sort_order,
-                                                             limit=limit,
+                                                             limit=limit,site_filt=site_filt,
                                                              table=table.format(dimension=using),
                                                              date_field=date_field)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
             elif attribution_model == 'last_non-direct_interaction':
-                for date in period:
+                for date in relative_period:
                     date0 = (datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
                     q = '''SELECT {dimension},{sum_metric_string}
                                FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
-                               WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                               WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
-                               ALL RIGHT JOIN
-                               (SELECT {metric_counts},visitorId,{dimension} FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimension},visitorId)
+                               ALL INNER JOIN
+                               (SELECT {metric_counts},visitorId,{dimension} FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimension},visitorId)
                                USING visitorId
                                GROUP BY {dimension}
                                ORDER BY {sort_column} {sort_order}
@@ -392,25 +392,25 @@ def CHapi(request):
                                                              sum_metric_string=sum_metric_string,
                                                              date1=date['date1'], sort_column=sort_column_in_query,
                                                              date2=date['date2'], filt=filt, sort_order=sort_order,
-                                                             limit=limit,
+                                                             limit=limit,site_filt=site_filt,
                                                              table=table.format(dimension=using),
                                                              date_field=date_field)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
             else:
-                for date in period:
+                for date in relative_period:
                     q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
-                                                                    WHERE 1 {filt} AND {updimensions} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                                                                    WHERE 1 {filt} AND {site_filt} AND {updimensions} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                                                     GROUP BY {dimension}
                                                                     ORDER BY {sort_column} {sort_order}
                                                                     FORMAT JSON
                                                                     '''.format(dimension_with_alias=dimensionslist_with_segments_and_aliases[n+1],dimension=dimension,
                                                                                updimensions=updm,sort_column=sort_column_in_query,sort_order=sort_order,
                                                                                metric_counts=metric_counts,
-                                                                               date1=date['date1'],
+                                                                               date1=date['date1'],site_filt=site_filt,
                                                                                date2=date['date2'], filt=filt,
                                                                                having=having, table=table.format(dimension=using),
                                                                                date_field=date_field)
-
+                    print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm)
             empties = []
@@ -464,15 +464,15 @@ def CHapi(request):
                 date0 = (datetime.strptime(relative_period[0]['date1'], '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
                 q = '''SELECT CAST(uniq({dimension}),'Int') as h{dimension}
                                     FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
-                                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                     AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
                                     ALL INNER JOIN
-                                    (SELECT visitorId FROM {table} WHERE 1 {filt}  AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                                    (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt}  AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
                                     USING visitorId
                                     ORDER BY NULL {sort_order}
                                                        FORMAT JSON
                                                        '''.format(dimension_with_alias=dimensionslist[dim_num],dimension_without_aliases=list_with_time_dimensions_without_aliases[dim_num],
-                                                                  date0=str(date0),dimension_counts=dimension_counts[dim_num],
+                                                                  date0=str(date0),dimension_counts=dimension_counts[dim_num],site_filt=site_filt,
                                                                   date1=relative_period[0]['date1'],dimension=dimensionslist[dim_num],
                                                                   date2=relative_period[0]['date2'], filt=filt, sort_order=sort_order,
                                                                   limit=limit,
@@ -481,16 +481,16 @@ def CHapi(request):
             elif attribution_model=='last_non-direct_interaction':
                 q = '''SELECT CAST(uniq({dimension}),'Int') as h{dimension}
                                                     FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
-                                                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                                                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                                     AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
-                                                    ALL RIGHT JOIN
-                                                    (SELECT visitorId,{dimension} FROM {table} WHERE 1 {filt}  AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimension},visitorId)
+                                                    ALL INNER JOIN
+                                                    (SELECT visitorId,{dimension} FROM {table} WHERE 1 {filt}  AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimension},visitorId)
                                                     USING visitorId
                                                     ORDER BY NULL {sort_order}
                                                                        FORMAT JSON
                                                                        '''.format(
                     dimension_with_alias=dimensionslist[dim_num],dimension_without_aliases=list_with_time_dimensions_without_aliases[dim_num],
-                    dimension_counts=dimension_counts[dim_num],
+                    dimension_counts=dimension_counts[dim_num],site_filt=site_filt,
                     date1=relative_period[0]['date1'],dimension=dimensionslist[dim_num],
                     date2=relative_period[0]['date2'], filt=filt, sort_order=sort_order,
                     limit=limit,
@@ -500,10 +500,10 @@ def CHapi(request):
             else:
                 q = ''' SELECT {dimension_counts}
                                 FROM {table}
-                                WHERE 1 {filt} AND {date_filt}
+                                WHERE 1 {filt} AND {site_filt} AND {date_filt}
                                 ORDER BY NULL {sort_order}
                                 FORMAT JSON
-                               '''.format(dimension_counts=dimension_counts[dim_num], filt=filt,
+                               '''.format(dimension_counts=dimension_counts[dim_num], filt=filt,site_filt=site_filt,
                                           sort_order=sort_order, table=tab.format(dimension=dimensionslist[dim_num]),
                                           date_filt=date_filt)
                 print(q)
@@ -539,19 +539,19 @@ def CHapi(request):
             # Запрос на получение сумм показателей без фильтра
             q_total = ''' SELECT {metric_counts}
                     FROM {table}
-                    WHERE {date_field} BETWEEN '{date1}' AND '{date2}'
+                    WHERE {date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filt}
                     ORDER BY NULL {sort_order}
                     FORMAT JSON
-                   '''.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,
+                   '''.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,site_filt=site_filt,
                               sort_order=sort_order,table=table.format(dimension=dimensionslist[0]),date_field=date_field)
 
             # С фильтром
             q = ''' SELECT {metric_counts}
                                 FROM {table}
-                                WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                                WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                 ORDER BY NULL {sort_order}
                                 FORMAT JSON
-                               '''.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,
+                               '''.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,site_filt=site_filt,
                                           filt=filt, sort_order=sort_order,table=table.format(
                                                                               dimension=dimensionslist[0]),date_field=date_field)
             """q_total_stat = ''' SELECT {metric_counts}
@@ -605,11 +605,11 @@ def CHapi(request):
         ar_d=[]
         for date in period:
             t = '''SELECT {metric_counts} FROM {table}
-                    WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                    WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                     FORMAT JSON
                     '''.format(
                 metric_counts=metric_counts,
-                date1=date['date1'],
+                date1=date['date1'],site_filt=site_filt,
                 date2=date['date2'], filt=filt,
                 table=table, date_field=date_field)
 
@@ -663,10 +663,11 @@ def CHapi(request):
                                 headers=headers).content.decode('utf-8'))['name']
             for date in relative_period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
-                                                                      WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
+                                                                      WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
                                                                       FORMAT JSON
                                                                     '''.format(
                     label_val=seg_label,
+                    site_filt=site_filt,
                     segment_val=seg,
                     seg_filt=seg_filt,
                     metric_counts=metric_counts,
@@ -717,10 +718,10 @@ def CHapi(request):
                     date0=(datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
                     q = '''SELECT {dimension},{sum_metric_string}
                     FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
-                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                     AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
                     ALL INNER JOIN
-                    (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
+                    (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
                     USING visitorId
                     GROUP BY {dimension}
                     ORDER BY {sort_column} {sort_order}
@@ -728,7 +729,7 @@ def CHapi(request):
                                        FORMAT JSON
                                        '''.format(dimension_with_alias=dim_with_alias[0],date0=str(date0),dimension=dim[0],dimension_without_aliases=list_with_time_dimensions_without_aliases[0],
                                                   metric_counts=metric_counts,sum_metric_string=sum_metric_string,
-                                                  date1=date['date1'],sort_column=sort_column_in_query,
+                                                  date1=date['date1'],sort_column=sort_column_in_query,site_filt=site_filt,
                                                   date2=date['date2'], filt=filt,sort_order=sort_order,limit=limit,
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
                     print(q)
@@ -737,10 +738,10 @@ def CHapi(request):
                 for date in relative_period:
                     q = '''SELECT {dimension},{sum_metric_string}
                     FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
-                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                     AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
-                    ALL RIGHT JOIN
-                    (SELECT {metric_counts},visitorId, {dimension} FROM {table} WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId,{dimension})
+                    ALL INNER JOIN
+                    (SELECT {metric_counts},visitorId, {dimension} FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId,{dimension})
                     USING visitorId
                     GROUP BY {dimension}
                     ORDER BY {sort_column} {sort_order}
@@ -748,7 +749,7 @@ def CHapi(request):
                                        FORMAT JSON
                                        '''.format(dimension_with_alias=dim_with_alias[0],dimension=dim[0],dimension_without_aliases=list_with_time_dimensions_without_aliases[0],
                                                   metric_counts=metric_counts,sum_metric_string=sum_metric_string,
-                                                  date1=date['date1'],sort_column=sort_column_in_query,
+                                                  date1=date['date1'],sort_column=sort_column_in_query,site_filt=site_filt,
                                                   date2=date['date2'], filt=filt,sort_order=sort_order,limit=limit,
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
                     print(q)
@@ -756,13 +757,13 @@ def CHapi(request):
             else:
                 for date in relative_period:
                     q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
-                                       WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                                       WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                        GROUP BY {dimension}
                                        ORDER BY {sort_column} {sort_order}
                                        {limit}
                                        FORMAT JSON
                                        '''.format(dimension_with_alias=dim_with_alias[0],dimension=dim[0], metric_counts=metric_counts,
-                                                  date1=date['date1'],sort_column=sort_column_in_query,
+                                                  date1=date['date1'],sort_column=sort_column_in_query,site_filt=site_filt,
                                                   date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
                     print(q)
@@ -837,11 +838,11 @@ def CHapi(request):
             counter=0
             for date in relative_period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
-                                                                      WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
+                                                                      WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
                                                                       FORMAT JSON
                                                                     '''.format(
                                                                                    label_val=seg_label,
-                                                                                   segment_val=seg,
+                                                                                   segment_val=seg,site_filt=site_filt,
                                                                                    seg_filt=seg_filt,
                                                                                    metric_counts=metric_counts,
                                                                                    date1=date['date1'],
@@ -939,7 +940,8 @@ def CHapi(request):
                 .replace('day_of_week',"dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
                         lang=lang))\
             .replace('year',"toYear(toDate(serverTimestamp))").replace('minute',"toMinute(toDateTime(serverTimestamp))").replace('second',"toSecond(toDateTime(serverTimestamp))")\
-            .replace('month',"dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang))
+            .replace('month',"dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang)).replace('week',"concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))")\
+            .replace('quarter',"concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))))")
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
@@ -968,6 +970,22 @@ def CHapi(request):
         for d in dimensionslist_with_segments:
             if 'segment' not in d and d!=list:
                 dimensionslist.append(d)
+                if d == 'week':
+                    time_dimensions_dict[
+                        d] = "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))"
+                    dimensionslist_with_segments_and_aliases.append(
+                        "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6))) as week")
+                    list_with_time_dimensions_without_aliases.append(
+                        "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))")
+                    continue
+                if d == 'quarter':
+                    time_dimensions_dict[
+                        d] = " concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp)))))"
+                    dimensionslist_with_segments_and_aliases.append(
+                        " concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))) as quarter")
+                    list_with_time_dimensions_without_aliases.append(
+                        " concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp)))))")
+                    continue
                 if d == 'month':
                     time_dimensions_dict[d] = "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang)
                     dimensionslist_with_segments_and_aliases.append("dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp)))) as month".format(lang=lang))
@@ -1111,6 +1129,7 @@ def CHapi(request):
             except:
                 relative_period=period
                 date_field = 'serverDate'
+                site_filt=' 1'
             try:
                 if json.loads(get_clickhouse_data(
                         'SELECT idSite FROM CHdatabase.hits_with_visits WHERE idSite={idSite} FORMAT JSON'.format(
@@ -1120,7 +1139,7 @@ def CHapi(request):
                                     'site_db_id']), 'http://46.4.81.36:8123'))['data'] == []:
                     filt = ' AND 0'
                 else:
-                    filt = filt + ' AND idSite==' + str(json.loads(requests.get(
+                    site_filt = ' idSite==' + str(json.loads(requests.get(
                         'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
                         headers=headers).content.decode('utf-8'))['site_db_id'])
             except:
@@ -1128,6 +1147,7 @@ def CHapi(request):
         except:
             relative_period=period
             date_field = 'serverDate'
+            site_filt=' 1'
 
         #print(json.loads(requests.get('https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id), headers=headers).content.decode('utf-8')))
         print(relative_period)
@@ -1350,16 +1370,17 @@ def diagram_stat(request):
         a={}
         for dim_num in range(len(dimensionslist)):
             if dimensionslist[dim_num] not in list_of_adstat_par and is_ad:
-                tab='CHdatabase.hits ALL INNER JOIN CHdatabase.visits USING idVisit'
+                tab='CHdatabase.hits_with_visits'
             else:
                 tab=table
             q = ''' SELECT {dimension_counts}
                      FROM {table}
-                     WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                     WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                      ORDER BY NULL {sort_order}
                      FORMAT JSON
-                    '''.format(date1=date1, date2=date2, dimension_counts=dimension_counts[dim_num], filt=filt,
+                    '''.format(site_filt=site_filt,date1=date1, date2=date2, dimension_counts=dimension_counts[dim_num], filt=filt,
                                sort_order=sort_order,table=tab.format(dimension=dimensionslist[dim_num]),date_field=date_field)
+            print(q)
 
             try:
                 a.update(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0])
@@ -1391,26 +1412,26 @@ def diagram_stat(request):
         # Запрос на получение сумм показателей без фильтра
         q_total = ''' SELECT {metric_counts}
                     FROM {table}
-                    WHERE {date_field} BETWEEN '{date1}' AND '{date2}'
+                    WHERE {date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filt}
                     ORDER BY NULL {sort_order}
                     FORMAT JSON
-                   '''.format(date1=relative_date1, date2=relative_date2, metric_counts=metric_counts_visits,
+                   '''.format(site_filt=site_filt,date1=relative_date1, date2=relative_date2, metric_counts=metric_counts_visits,
                               sort_order=sort_order,table=table,date_field=date_field)
 
         # С фильтром
         q = ''' SELECT {metric_counts}
                                 FROM {table}
-                                WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                                WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                 ORDER BY NULL {sort_order}
                                 FORMAT JSON
-                               '''.format(date1=relative_date1, date2=relative_date2, metric_counts=metric_counts_visits,
+                               '''.format(site_filt=site_filt,date1=relative_date1, date2=relative_date2, metric_counts=metric_counts_visits,
                                           filt=filt, sort_order=sort_order,table=table,date_field=date_field)
         q_total_stat = ''' SELECT {metric_counts}
                                                            FROM {table}
-                                                           WHERE {date_field} BETWEEN '{date1}' AND '{date2}'
+                                                           WHERE {date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filt}
                                                            ORDER BY NULL {sort_order}
                                                            FORMAT JSON
-                                                          '''.format(date1=relative_date1, date2=relative_date2,
+                                                          '''.format(site_filt=site_filt,date1=relative_date1, date2=relative_date2,
                                                                      metric_counts=metric_counts_stat,
                                                                      sort_order=sort_order,
                                                                      table=table.format(dimension=dimensionslist[0]),
@@ -1418,10 +1439,10 @@ def diagram_stat(request):
         # С фильтром
         q_stat = ''' SELECT {metric_counts}
                                                                        FROM {table}
-                                                                       WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+                                                                       WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                                                        ORDER BY NULL {sort_order}
                                                                        FORMAT JSON
-                                                                      '''.format(date1=relative_date1,
+                                                                      '''.format(site_filt=site_filt,date1=relative_date1,
                                                                                  date2=relative_date2,
                                                                                  metric_counts=metric_counts_stat,
                                                                                  filt=filt, sort_order=sort_order,
@@ -1456,12 +1477,12 @@ def diagram_stat(request):
         q="""
         SELECT {dimensions_with_aliases},({metric_counts}) as metrics
         FROM {table}
-        WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
+        WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
         GROUP BY {dimensions}
         ORDER BY {sort_column} {sort_order}
         {limit}
         FORMAT JSON
-        """.format(dimensions_with_aliases=','.join(dim_with_aliases),date1=date1,date2=date2,filt=filt,date_field=date_field,table=table.format(dimension=','.join(dimensionslist)),limit=limit,sort_column=sort_column,sort_order=sort_order,metric_counts=metric_counts,dimensions=','.join(dimensionslist))
+        """.format(site_filt=site_filt,dimensions_with_aliases=','.join(dim_with_aliases),date1=date1,date2=date2,filt=filt,date_field=date_field,table=table.format(dimension=','.join(dimensionslist)),limit=limit,sort_column=sort_column,sort_order=sort_order,metric_counts=metric_counts,dimensions=','.join(dimensionslist))
         print(q)
         stats=json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data']
         #Если показатеь один, обрабатываем ошибку
@@ -1491,12 +1512,12 @@ def diagram_stat(request):
                 q = """
                         SELECT {dimensions},[{metric_counts}] as metrics
                         FROM {table}
-                        WHERE 1 {filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
+                        WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
                         GROUP BY {dimensions}
                         ORDER BY {sort_column} {sort_order}
                         {limit}
                         FORMAT JSON
-                        """.format(date1=date1, date2=date2, filt=filt, date_field=date_field, table=table, limit=limit,
+                        """.format(site_filt=site_filt,date1=date1, date2=date2, filt=filt, date_field=date_field, table=table, limit=limit,
                                    sort_column=sort_column, sort_order=sort_order, metric_counts=metric_counts,
                                    dimensions=','.join(dimensionslist),seg_filt=seg_filt)
 
@@ -1586,7 +1607,8 @@ def diagram_stat(request):
                 .replace('day_of_week',"dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
                         lang=lang))\
             .replace('year',"toYear(toDate(serverTimestamp))").replace('minute',"toMinute(toDateTime(serverTimestamp))").replace('second',"toSecond(toDateTime(serverTimestamp))")\
-            .replace('month',"dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang))
+            .replace('month',"dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang)).replace('week',"concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))")\
+            .replace('quarter',"concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))))")
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
@@ -1626,6 +1648,18 @@ def diagram_stat(request):
                     dimensionslist_with_aliases.append(
                         "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp)))) as month".format(
                             lang=lang))
+                    continue
+                if d == 'quarter':
+                    time_dimensions_dict[
+                        d] = "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp)))))"
+                    dimensionslist_with_aliases.append(
+                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))) as quarter")
+                    continue
+                if d == 'week':
+                    time_dimensions_dict[
+                        d] = "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))"
+                    dimensionslist_with_aliases.append(
+                        "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6))) as week")
                     continue
                 if d == 'second':
                     time_dimensions_dict[d] = "toSecond(toDateTime(serverTimestamp))"
@@ -1725,6 +1759,7 @@ def diagram_stat(request):
                 relative_date1=date1
                 relative_date2 = date2
                 date_field = 'serverDate'
+                site_filt=' 1'
             try:
                 if json.loads(get_clickhouse_data(
                         'SELECT idSite FROM CHdatabase.hits_with_visits WHERE idSite={idSite} FORMAT JSON'.format(
@@ -1734,7 +1769,7 @@ def diagram_stat(request):
                                     'site_db_id']), 'http://46.4.81.36:8123'))['data'] == []:
                     filt = ' AND 0'
                 else:
-                    filt = filt + ' AND idSite==' + str(json.loads(requests.get(
+                    site_filt = ' idSite==' + str(json.loads(requests.get(
                         'https://s.analitika.online/api/profiles/{profile_id}/?all=1'.format(profile_id=profile_id),
                         headers=headers).content.decode('utf-8'))['site_db_id'])
             except:
@@ -1743,6 +1778,7 @@ def diagram_stat(request):
             relative_date1=date1
             relative_date2= date2
             date_field = 'serverDate'
+            site_filt=' 1'
 
         table = 'CHdatabase.hits_with_visits'
         list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
