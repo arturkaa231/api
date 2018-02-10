@@ -12,6 +12,7 @@ import pytz
 def MetricCounts(metrics, headers):
     metric_counts = []
     for i in metrics:
+
         if 'conversion_rate'==i:
             metric_counts.append(
                 "if(uniq(idVisit)=0,0,floor(sum(Type='goal')*100/uniq(idVisit),2)) as {metric}".format(
@@ -131,8 +132,30 @@ def MetricCounts(metrics, headers):
             for goal in goals:
                 calc_metr = calc_metr.replace(goal, "sum(Type='goal' AND goalId={N})".format(N=goal[4:]))
             metric_counts.append('floor(' + calc_metr + ',2)' + ' as calculated_metric{N}'.format(N=int(i[17:])))
+        #Добавление показателей, связанных с целями
         if 'goal' in i:
-            if '_conversion' in i:
+            if 'goalgroup' in i:
+                try:
+                    #Добавляем группы целей
+                    query=[] # список с (sum(Type='goal' and goalId={N}) для всех целей, что есть в goals в апи
+                    for goal in json.loads(requests.get(
+                        'https://s.analitika.online/api/reference/goal_groups/{id}?all=1'.format(id=i.partition("_conversion")[0][9:]),
+                            headers=headers).content.decode('utf-8'))['goals']:
+                        query.append("CAST(sum(Type='goal' AND goalId={N}),'Int')".format(N=goal))
+                    query='+'.join(query) #строка запроса с суммой goalN
+                    #если в показателе есть _conversion, то вычисляем относительный показатель(делим на колчество визитов)
+                    if '_conversion' in i:
+                        metric_counts.append('if(uniq(idVisit)=0,0,floor(('+query+')*100/uniq(idVisit),2))  as goalgroup{N}_conversion'.format(
+                        N=i.partition("_conversion")[0][9:]))
+                        print('if(uniq(idVisit)=0,0,floor(('+query+')*100/uniq(idVisit),2))  as goalgroup{N}_conversion'.format(
+                        N=i.partition("_conversion")[0][9:]))
+                    else:
+                        print(query+' as goalgroup{N}'.format(N=i[9:]))
+                        metric_counts.append(query+' as goalgroup{N}'.format(N=i[9:]))
+
+                except:
+                    pass
+            elif '_conversion' in i:
                 metric_counts.append(
                     " if(uniq(idVisit)=0,0,floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2)) as goal{N}_conversion".format(
                         N=i.partition("_conversion")[0][4:]))
@@ -413,14 +436,16 @@ def CHapi(request):
                     print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm)
+            #возвращаем пусто sub если на данном уровне все показатели равны нулю
             empties = []
             for i in array_dates:
                 empty_d = True
                 for j in i:
-                    if len(list(j.keys())) != 1:
+                    if len(list(j.keys())) != 1 and list(j.values()).count(0) != len(list(j.keys())) - 1:
                         empty_d = False
                         break
                 empties.append(empty_d)
+
             if empties.count(True) == len(empties):
                 return sub
 
@@ -429,18 +454,18 @@ def CHapi(request):
                              'segment':'{label}=={value}'.format(label=dimensionslist_with_segments[n + 1]
                                                                  ,value=i2[dimensionslist_with_segments[n + 1]])}
                 dates = []
-                c=0
+                is_all_nulls = True
                 for m in range(len(array_dates)):
                     metrics_dict = dict.fromkeys(metrics)
                     for j in metrics_dict:
                         try:
                             metrics_dict[j] = dates_dicts[m][i2[dimensionslist_with_segments[n+1]]][j]
-                            c=1
+                            is_all_nulls=False
                         except:
                             metrics_dict[j]=0
                     dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
-                if c==0:
-                    break
+                if is_all_nulls:
+                    continue
                 stat_dict['dates'] = dates
                 if n != len(dimensionslist_with_segments) - 2:
                     up_dim=stat_dict.copy()#Передаем словарь с информацией о вернем уровне "Все файлы"
@@ -772,11 +797,11 @@ def CHapi(request):
             dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1)
             #Проверка на выдачу только нулей в показателях. Если тлько нули возвращаем пустой список
             empties=[]
-
             for i in array_dates:
                 empty_d=True
                 for j in i:
-                    if len(list(j.keys()))!=1:
+                    print(list(j.values()).count(0))
+                    if len(list(j.keys()))!=1 and  list(j.values()).count(0)!=len(list(j.keys()))-1:
                         empty_d=False
                         break
                 empties.append(empty_d)
@@ -793,18 +818,22 @@ def CHapi(request):
                              'segment': '{label}=={value}'.format(label=dim[0]
                                                                   , value=i[dim[0]])
                              }
-                #print(stat_dict)
                 dates = []
+                is_all_nulls = True
                 for m in range(len(array_dates)):
                     metrics_dict = dict.fromkeys(metrics)
+
                     for j in metrics_dict:
                         try:
                             metrics_dict[j] = dates_dicts[m][i[dim[0]]][j]
+                            is_all_nulls=False
                         except:
                             metrics_dict[j]=0
 
                     dates.append({'date1': period[m]['date1'], 'date2': period[m]['date2'], 'metrics': metrics_dict})
-                print(dates)
+                #Если все значения показателей во всех временных интерваллах для данного значения параметра равны нулю, то игнорируем это значение параметра
+                if is_all_nulls:
+                    continue
                 stat_dict['dates'] = dates
                 if len(dim) > 1:
                     # Добавляем подуровень. Если параметр вычисляемый то подставляем его название из словаря time_dimensions_dict
