@@ -153,7 +153,7 @@ def MetricCounts(metrics, headers,table):
                 'https://s.analitika.online/api/reference/calculated_metrics/{num}/?all=1'.format(
                     num=int(i[17:])),
                 headers=headers).content.decode('utf-8'))['definition']
-
+            print(calc_metr)
             #Проверяем есть ли в составе calc_metr показатели дл рекламной статистики, если есть то меняем таблицу, из которой будут браться данные
             for metr in ['clicks','impressions','cost']:
                 if metr in calc_metr:
@@ -161,7 +161,7 @@ def MetricCounts(metrics, headers,table):
             calc_metr = calc_metr.replace('impressions', 'sum(Impressions}').replace('nb_actions_per_visit',"if(uniq(idVisit)=0,0,count(*)/uniq(idVisit))")\
                     .replace('nb_downloas_per_visit',"if(uniq(idVisit)=0,0,sum(Type='download')/uniq(idVisit))").replace('cost', 'sum(Cost)')\
                     .replace('clicks', "sum(Clicks)").replace('nb_visits_with_searches',"countIf(searches>0)").replace('nb_visits', "uniq(idVisit)").replace('nb_actions',"count(*)")\
-                    .replace('nb_visitors', "uniq(visitorId)").replace('bounce_count',"uniqIf(idVisit,visitDuration=0))").replace('bounce_rate','if(uniq(idVisit)=0,0,(uniqIf(idVisit,visitDuration=0)*100/uniq(idVisit)))')\
+                    .replace('nb_visitors', "uniq(visitorId)").replace('bounce_count',"uniqIf(idVisit,visitDuration=0)").replace('bounce_rate','if(uniq(idVisit)=0,0,(uniqIf(idVisit,visitDuration=0)*100/uniq(idVisit)))')\
                     .replace('nb_pageviews',"sum(Type='action')").replace('nb_conversions',"sum(Type='goal')").replace('nb_downloads',"sum(Type='download')")\
                     .replace('avg_time_generation',"avg(generationTimeMilliseconds)/1000").replace('ctr',"if(sum(impressions)=0,0,(sum(clicks)/sum(impressions))*100)")\
                     .replace('nb_pageviews_per_visit',"sum(Type='action')/uniq(idVisit)").replace('nb_new_visitors_per_all_visitors',"if(uniq(visitorId)=0,0,uniqIf(visitorId,visitorType='new')*100/uniq(visitorId))")\
