@@ -2,17 +2,62 @@ from django.shortcuts import render
 from django.shortcuts import render_to_response,redirect
 from django.template.context_processors import csrf
 import json
+import os.path
+from uuid import uuid4
+import os
+from django.http.response import HttpResponse
+from wsgiref.util import FileWrapper
+from Word2Vec.settings import BASE_DIR,MEDIA_ROOT
+import pandas
 import requests
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 import pprint
 import re
+from pandas import ExcelWriter
+from pandas import ExcelFile
+import copy
 from datetime import datetime, timedelta
 import pytz
-def MetricCounts(metrics, headers):
+def get_all_metrics():
+    all_metrics=[]
+    return all_metrics
+def get_all_dimensions():
+    #Дописать
+    all_dimensions=['visitorId','idVisit','deviceModel','serverDate','referrerTypeName',
+                    'referrerUrl','deviceType','languageCode','language','deviceBrand','operatingSystemName',
+                    'visitorType','country','AdCampaignId','AdKeywordId','AdBannerId','AdGroupId',
+                    'AdPositionType','AdPosition','AdRegionId','AdRetargetindId','AdTargetId','DRF',
+                    'AdPlacement','AdDeviceType','browserName','browserFamily','operatingSystemVersion',
+                    'browserVersion','visitServerHour','city','day_of_week','day_of_week_code','month','week',
+                    'quarter','month_code','year','minute','second','campaignSource','campaignMedium',
+                    'campaignKeyword','campaignContent','visitLocalHour','campaignName','provider','resolution','hour','week_period','quarter_period','month_period']
+    return all_dimensions
+def negative_condition(condition):
+    negatives = {
+        '==': '!=',
+        '=@': '!@',
+        '>': '<',
+        '>=': '<=',
+        '=^': '!^',
+        '=$': '!$',
+        '=~': '!~',
+
+        '!=': '==',
+        '!@': '=@',
+        '<': '>',
+        '<=': '>=',
+        '!~': '=~',
+        '!^': '=^',
+        '!$': '=$'
+    }
+    if condition in negatives:
+        return negatives[condition]
+
+    return condition
+def MetricCounts(metrics, headers,table):
     metric_counts = []
     for i in metrics:
-
         if 'conversion_rate'==i:
             metric_counts.append(
                 "if(uniq(idVisit)=0,0,floor(sum(Type='goal')*100/uniq(idVisit),2)) as {metric}".format(
@@ -104,24 +149,27 @@ def MetricCounts(metrics, headers):
             metric_counts.append("CAST(uniqIf(idVisit,visitDuration=0),'Int') as {metric}".format(metric=i))
             continue
         if 'calculated_metric' in i:
-
             calc_metr = json.loads(requests.get(
                 'https://s.analitika.online/api/reference/calculated_metrics/{num}/?all=1'.format(
                     num=int(i[17:])),
                 headers=headers).content.decode('utf-8'))['definition']
 
-            calc_metr = calc_metr.replace('impressions', 'sum(Impressions}').replace('nb_actions_per_visit',"if(uniq(idVisit)=0,0,floor(count(*)/uniq(idVisit),2))")\
-                    .replace('nb_downloas_per_visit',"if(uniq(idVisit)=0,0,floor(sum(Type='download')/uniq(idVisit),2))").replace('cost', 'sum(Cost)')\
-                    .replace('clicks', "CAST(sum(Clicks),'Int')").replace('nb_visits_with_searches',"CAST(countIf(searches>0),'Int')").replace('nb_visits', "CAST(uniq(idVisit),'Int')").replace('nb_actions',"CAST(count(*),'Int')")\
-                    .replace('nb_visitors', "CAST(uniq(visitorId),'Int')").replace('bounce_count',"CAST(uniqIf(idVisit,visitDuration=0),'Int')").replace('bounce_rate','if(uniq(idVisit)=0,0,floor((uniqIf(idVisit,visitDuration=0)*100/uniq(idVisit)),2))')\
-                    .replace('nb_pageviews',"CAST(sum(Type='action'),'Int')").replace('nb_conversions',"CAST(sum(Type='goal'),'Int')").replace('nb_downloads',"CAST(sum(Type='download'),'Int')")\
-                    .replace('avg_time_generation',"floor(avg(generationTimeMilliseconds)/1000,2)").replace('ctr',"if(sum(shows)=0,0,floor((sum(clicks)/sum(shows))*100,2))")\
-                    .replace('nb_pageviews_per_visit',"floor(sum(Type='action')/uniq(idVisit),2)").replace('nb_new_visitors_per_all_visitors',"if(uniq(visitorId)=0,0,floor(uniqIf(visitorId,visitorType='new')*100/uniq(visitorId),2))")\
-                    .replace('nb_new_visitors',"CAST(uniqIf(visitorId,visitorType='new'),'Int')").replace('nb_new_visits_per_all_visits',"if(uniq(idVisit)=0,0,floor(uniqIf(idVisit,visitorType='new')*100/uniq(idVisit),2))")\
-                    .replace('nb_new_visits',"CAST(uniqIf(idVisit,visitorType='new'),'Int')").replace('nb_return_visitors_per_all_visitors',"if(uniq(visitorId)=0,0,floor(uniqIf(visitorId,visitorType='returning')*100/uniq(visitorId),2))")\
+            #Проверяем есть ли в составе calc_metr показатели дл рекламной статистики, если есть то меняем таблицу, из которой будут браться данные
+            for metr in ['clicks','impressions','cost']:
+                if metr in calc_metr:
+                    table="CHdatabase.hits_with_visits ALL LEFT JOIN CHdatabase.adstat USING {dimension}"
+            calc_metr = calc_metr.replace('impressions', 'sum(Impressions}').replace('nb_actions_per_visit',"if(uniq(idVisit)=0,0,count(*)/uniq(idVisit))")\
+                    .replace('nb_downloas_per_visit',"if(uniq(idVisit)=0,0,sum(Type='download')/uniq(idVisit))").replace('cost', 'sum(Cost)')\
+                    .replace('clicks', "sum(Clicks)").replace('nb_visits_with_searches',"countIf(searches>0)").replace('nb_visits', "uniq(idVisit)").replace('nb_actions',"count(*)")\
+                    .replace('nb_visitors', "uniq(visitorId)").replace('bounce_count',"uniqIf(idVisit,visitDuration=0))").replace('bounce_rate','if(uniq(idVisit)=0,0,(uniqIf(idVisit,visitDuration=0)*100/uniq(idVisit)))')\
+                    .replace('nb_pageviews',"sum(Type='action')").replace('nb_conversions',"sum(Type='goal')").replace('nb_downloads',"sum(Type='download')")\
+                    .replace('avg_time_generation',"avg(generationTimeMilliseconds)/1000").replace('ctr',"if(sum(impressions)=0,0,(sum(clicks)/sum(impressions))*100)")\
+                    .replace('nb_pageviews_per_visit',"sum(Type='action')/uniq(idVisit)").replace('nb_new_visitors_per_all_visitors',"if(uniq(visitorId)=0,0,uniqIf(visitorId,visitorType='new')*100/uniq(visitorId))")\
+                    .replace('nb_new_visitors',"uniqIf(visitorId,visitorType='new')").replace('nb_new_visits_per_all_visits',"if(uniq(idVisit)=0,0,uniqIf(idVisit,visitorType='new')*100/uniq(idVisit))")\
+                    .replace('nb_new_visits',"uniqIf(idVisit,visitorType='new')").replace('nb_return_visitors_per_all_visitors',"if(uniq(visitorId)=0,0,uniqIf(visitorId,visitorType='returning')*100/uniq(visitorId))")\
                     .replace('nb_return_visitors',"uniq(visitorId)-uniqIf(visitorId,visitorType='new')")\
-                    .replace('avg_visit_length',"if(uniq(idVisit)=0,0,floor(sum(visitDuration)/uniq(idVisit),2))").replace('nb_searches_visits_per_all_visits',"if(uniq(idVisit)=0,0,floor(countIf(searches>0)*100/uniq(idVisit),2))")\
-                    .replace('nb_searches',"sum(searches)").replace('conversion_rate',"if(uniq(idVisit)=0,0,floor(sum(Type='goal')*100/uniq(idVisit),2))")
+                    .replace('avg_visit_length',"if(uniq(idVisit)=0,0,sum(visitDuration)/uniq(idVisit))").replace('nb_searches_visits_per_all_visits',"if(uniq(idVisit)=0,0,countIf(searches>0)*100/uniq(idVisit))")\
+                    .replace('nb_searches',"sum(searches)").replace('conversion_rate',"if(uniq(idVisit)=0,0,sum(Type='goal')*100/uniq(idVisit))")
 
             goal_conversions = re.findall(r'goal\d{1,3}_conversion', calc_metr)
             for goal_conversion in goal_conversions:
@@ -131,12 +179,12 @@ def MetricCounts(metrics, headers):
             goals = re.findall(r'goal\d{1,3}_{0}', calc_metr)
             for goal in goals:
                 calc_metr = calc_metr.replace(goal, "sum(Type='goal' AND goalId={N})".format(N=goal[4:]))
-            metric_counts.append('floor(' + calc_metr + ',2)' + ' as calculated_metric{N}'.format(N=int(i[17:])))
+            metric_counts.append('if('+calc_metr+'==inf,0,floor(' + calc_metr + ',2))' + ' as calculated_metric{N}'.format(N=int(i[17:])))
         #Добавление показателей, связанных с целями
         if 'goal' in i:
             if 'goalgroup' in i:
                 try:
-                    #Добавляем группы целей
+                 #Добавляем группы целей
                     query=[] # список с (sum(Type='goal' and goalId={N}) для всех целей, что есть в goals в апи
                     for goal in json.loads(requests.get(
                         'https://s.analitika.online/api/reference/goal_groups/{id}?all=1'.format(id=i.partition("_conversion")[0][9:]),
@@ -169,18 +217,73 @@ def MetricCounts(metrics, headers):
             metric_counts.append("CAST(count(*),'Int') as nb_actions")
         if i == "nb_visitors":
             metric_counts.append("CAST(uniq(visitorId),'Int') as nb_visitors")
-    return metric_counts
+    return table,metric_counts
+
 @csrf_exempt
 def CHapi(request):
-    def datesdicts(array_dates, dim,dim_with_alias,table,date_filt,updm):
+    def ChangeName(filename):
+        ext = filename.split('.')[-1]
+        # get filename
+        filename = '{}.{}'.format(uuid4().hex, ext)
+        # return the whole path to the file
+        return filename
+    def ToExcel(stats):
+        xls_stats=[]
+        try:
+            #определяем порядок столбцов(первым идет dimension)
+            col_names=[]
+            col_names.append(json.loads(requests.get(
+                'https://s.analitika.online/api/reference/dimensions/?code={dimension}'.format(dimension=dimensionslist[0]),
+                headers=headers).content.decode('utf-8'))['results'][0]['name'])
+            for metr in metrics:
+                col_names.append(json.loads(requests.get(
+                'https://s.analitika.online/api/reference/metrics/?code={metric}'.format(metric=metr),
+                headers=headers).content.decode('utf-8'))['results'][0]['name'])
+            #Добавляем строку с тоталами
+            totals={}
+            totals[col_names[0]]='\tИТОГО'
+            for metr in metrics:
+                totals[json.loads(requests.get(
+                'https://s.analitika.online/api/reference/metrics/?code={metric}'.format(metric=metr),
+                headers=headers).content.decode('utf-8'))['results'][0]['name']]=str(total_filtered[metr])+'(всего '+str(total[metr])+')'
+            xls_stats.append(totals)
+            for dic in stats:
+                xls_dic={}
+                xls_dic[json.loads(requests.get(
+                'https://s.analitika.online/api/reference/dimensions/?code={dimension}'.format(dimension=dimensionslist[0]),
+                headers=headers).content.decode('utf-8'))['results'][0]['name']]=dic[dimensionslist[0]]
+                for metr in metrics:
+                    xls_dic[json.loads(requests.get(
+                'https://s.analitika.online/api/reference/metrics/?code={metric}'.format(metric=metr),
+                headers=headers).content.decode('utf-8'))['results'][0]['name']]=dic[metr]
+                xls_stats.append(xls_dic)
+            df = pandas.DataFrame(xls_stats)
+            df = df[col_names]
+        except:
+            xls_stats=[]
+            xls_dict={json.loads(requests.get(
+                'https://s.analitika.online/api/reference/dimensions/?code={dimension}'.format(dimension=dimensionslist[0]),
+                headers=headers).content.decode('utf-8'))['results'][0]['name']:''}
+            for metr in metrics:
+                xls_dict[json.loads(requests.get(
+                'https://s.analitika.online/api/reference/metrics/?code={metric}'.format(metric=metr),
+                headers=headers).content.decode('utf-8'))['results'][0]['name']]=''
+            xls_stats.append(xls_dict)
+            df = pandas.DataFrame(xls_stats)
+        excel_name=ChangeName('stat.xlsx')
+        writer = ExcelWriter(os.path.join(MEDIA_ROOT, excel_name))
+        df.to_excel(writer, 'Sheet1', index=False)
+        writer.save()
+        return excel_name
+    def datesdicts(array_dates, dim,dim_with_alias,table,date_filt,updm,group_by):
         q_all = '''SELECT {dimension_with_alias} FROM {table}
                                            WHERE 1 {filt} AND {site_filt} AND {date_filt} AND {updm}
-                                           GROUP BY {dimension}
+                                           GROUP BY {group_by}
                                            {limit}
                                            FORMAT JSON
                                            '''.format(dimension_with_alias=dim_with_alias,dimension=dim,updm=updm,
                                                       metric_counts=metric_counts,
-                                                      filt=filt, limit=limit,site_filt=site_filt,
+                                                      filt=filt, limit=limit,site_filt=site_filt,group_by=group_by,
                                                       sort_order=sort_order,
                                                       table=table.format(dimension=dim), date_filt=date_filt)
 
@@ -226,20 +329,23 @@ def CHapi(request):
         #Добавляем параметры в список с параметрами верхних уровней
         #Если предыдущий уровень-сегмент, не добавляем фильтр
         try:
-            if dimensionslist_with_segments[n] in time_dimensions_dict.keys():
-                if type(i[dimensionslist_with_segments[n]]) is int:
+            if '_path' in dimensionslist_with_segments[n]:
+                updimensions.append('visitorId IN {list_of_id}'.format(list_of_id=i['visitorId']))
+            else:
+                if dimensionslist_with_segments[n] in time_dimensions_dict.keys():
+                    if type(i[dimensionslist_with_segments[n]]) is int:
 
-                    updimensions.append(
-                        "{updimension}={updimension_val}".format(updimension=time_dimensions_dict[dimensionslist_with_segments[n]],
-                                                                 updimension_val=i[dimensionslist_with_segments[n]]))
+                        updimensions.append(
+                            "{updimension}={updimension_val}".format(updimension=time_dimensions_dict[dimensionslist_with_segments[n]],
+                                                                     updimension_val=i[dimensionslist_with_segments[n]]))
+                    else:
+                        updimensions.append(
+                            "{updimension}='{updimension_val}'".format(updimension=time_dimensions_dict[dimensionslist_with_segments[n]],
+                                                                     updimension_val=i[dimensionslist_with_segments[n]]))
                 else:
                     updimensions.append(
-                        "{updimension}='{updimension_val}'".format(updimension=time_dimensions_dict[dimensionslist_with_segments[n]],
-                                                                 updimension_val=i[dimensionslist_with_segments[n]]))
-            else:
-                updimensions.append(
-            "{updimension}='{updimension_val}'".format(updimension_val=i[dimensionslist_with_segments[n]],
-                                                       updimension=dimensionslist_with_segments[n]))
+                "{updimension}='{updimension_val}'".format(updimension_val=i[dimensionslist_with_segments[n]],
+                                                           updimension=dimensionslist_with_segments[n]))
         except:
             pass
         sub=[]
@@ -373,6 +479,9 @@ def CHapi(request):
             else:
                 sort_column_in_query = sort_column
             using=using+','+dimension#поля, по которым необходимо join-ить таблицы, если запрошены параметры статистики
+            group_by = dimensionslist_with_segments[n+1]
+            if '_path' in dimensionslist_with_segments[n+1]:
+                group_by = 'visitorId'
             if attribution_model == 'first_interaction':
                 for date in relative_period:
                     date0 = (datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
@@ -435,7 +544,7 @@ def CHapi(request):
                                                                                date_field=date_field)
                     print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
-            dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm)
+            dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm,group_by)
             #возвращаем пусто sub если на данном уровне все показатели равны нулю
             empties = []
             for i in array_dates:
@@ -480,12 +589,23 @@ def CHapi(request):
         """Добавление ключа Counts в ответ"""
         a={}
         for dim_num in range(len(dimensionslist)):
-            if dimensionslist[dim_num] not in list_of_adstat_par and is_ad:
+            if dimensionslist[dim_num] not in list_of_adstat_par and not is_ad:
                 tab='CHdatabase.hits_with_visits'
             else:
                 tab=table
-
-            if attribution_model=='first_interaction':
+            if '_path' in dimensionslist[dim_num]:
+                q = """SELECT CAST(uniq(*),'Int') as h{dim} FROM (SELECT toString(groupUniqArray({dim_path}))
+                            FROM {table}
+                            WHERE 1 {filt} AND {site_filt} AND {date_filt}
+                            GROUP BY visitorId
+                            ORDER BY NULL {sort_order})
+                            FORMAT JSON""".format(dim=dimensionslist[dim_num], dim_path=dimensionslist[dim_num][:-5],
+                                                  filt=filt, site_filt=site_filt,
+                                                  sort_order=sort_order,
+                                                  table=tab.format(dimension=dimensionslist[dim_num]),
+                                                  date_filt=date_filt)
+                print(q)
+            elif attribution_model=='first_interaction':
                 date0 = (datetime.strptime(relative_period[0]['date1'], '%Y-%m-%d') - timedelta(days=30)).strftime('%Y-%m-%d')
                 q = '''SELECT CAST(uniq({dimension}),'Int') as h{dimension}
                                     FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
@@ -536,6 +656,7 @@ def CHapi(request):
                 a.update(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0])
             except:
                 a.update({'h'+dimensionslist[dim_num]:0})
+
         b = {}
         try:
             # Объеденяем словарь с датами со словарем  вернувшихся значений каждого из запрошенных параметров
@@ -550,8 +671,8 @@ def CHapi(request):
         dates = []
         metric_counts_visits=[]
         metric_counts_stat=[]
-        a={}
-        b={}
+        total={}
+        total_filtered={}
         #разделлим metric_counts для визитов и для рекламной статистики
         for metr in metric_counts_list:
             if 'clicks' in metr or 'impressions' in metr or 'cost' in metr:
@@ -611,21 +732,23 @@ def CHapi(request):
                 if metric_counts_stat != "":
                     a.update(json.loads(get_clickhouse_data(q_total_stat, 'http://46.4.81.36:8123'))['data'][0])
                     b.update(json.loads(get_clickhouse_data(q_stat, 'http://46.4.81.36:8123'))['data'][0])"""
-                a = json.loads(get_clickhouse_data(q_total, 'http://46.4.81.36:8123'))['data'][0]
-                b = json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0]
+                total = json.loads(get_clickhouse_data(q_total, 'http://46.4.81.36:8123'))['data'][0]
+                total_filtered = json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0]
+
                 # Создаем словарь, ключи которого это элементы списка metrics
                 metric_dict = dict.fromkeys(metrics)
                 # Заполняем этот словарь полученными из базы данными
-                for (i, j, k) in zip(metric_dict, a, b):
-                    metric_dict[i] = {"total_sum": a[j], "sum": b[k]}
+                for (i, j, k) in zip(metric_dict, total, total_filtered):
+                    metric_dict[i] = {"total_sum": total[j], "sum": total_filtered[k]}
             except:
                 metric_dict=dict.fromkeys(metrics)
+
                 for i in metric_dict:
                     metric_dict[i]={"total_sum":0,"sum":0}
             # Добавляем в него даты
             metric_dict.update(abs_date)
             dates.append(metric_dict)
-        return dates
+        return total,total_filtered,dates
     def AddMetricSumsWithFilt(period,metric_counts,filt,metrics,sort_order,table):
         ar_d=[]
         for date in period:
@@ -737,7 +860,9 @@ def CHapi(request):
                 sort_column_in_query=sort_column
             using=dim[0]
             #если указана модель аттрибуции показатели рассчитываются для первого визита
-
+            group_by=dim[0]
+            if '_path' in dim[0]:
+                group_by='visitorId'
             if attribution_model=='first_interaction':
                 for date in relative_period:
                     date0=(datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
@@ -748,14 +873,14 @@ def CHapi(request):
                     ALL INNER JOIN
                     (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
                     USING visitorId
-                    GROUP BY {dimension}
+                    GROUP BY {group_by}
                     ORDER BY {sort_column} {sort_order}
                     {limit}
                                        FORMAT JSON
                                        '''.format(dimension_with_alias=dim_with_alias[0],date0=str(date0),dimension=dim[0],dimension_without_aliases=list_with_time_dimensions_without_aliases[0],
                                                   metric_counts=metric_counts,sum_metric_string=sum_metric_string,
                                                   date1=date['date1'],sort_column=sort_column_in_query,site_filt=site_filt,
-                                                  date2=date['date2'], filt=filt,sort_order=sort_order,limit=limit,
+                                                  date2=date['date2'], filt=filt,sort_order=sort_order,limit=limit,group_by=group_by,
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
                     print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
@@ -766,16 +891,16 @@ def CHapi(request):
                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                     AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
                     ALL INNER JOIN
-                    (SELECT {metric_counts},visitorId, {dimension} FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId,{dimension})
+                    (SELECT {metric_counts},visitorId, {dimension} FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId,{group_by})
                     USING visitorId
-                    GROUP BY {dimension}
+                    GROUP BY {group_by}
                     ORDER BY {sort_column} {sort_order}
                     {limit}
                                        FORMAT JSON
                                        '''.format(dimension_with_alias=dim_with_alias[0],dimension=dim[0],dimension_without_aliases=list_with_time_dimensions_without_aliases[0],
                                                   metric_counts=metric_counts,sum_metric_string=sum_metric_string,
                                                   date1=date['date1'],sort_column=sort_column_in_query,site_filt=site_filt,
-                                                  date2=date['date2'], filt=filt,sort_order=sort_order,limit=limit,
+                                                  date2=date['date2'], filt=filt,sort_order=sort_order,limit=limit,group_by=group_by,
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
                     print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
@@ -783,18 +908,22 @@ def CHapi(request):
                 for date in relative_period:
                     q = '''SELECT {dimension_with_alias},{metric_counts} FROM {table}
                                        WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
-                                       GROUP BY {dimension}
+                                       GROUP BY {group_by}
                                        ORDER BY {sort_column} {sort_order}
                                        {limit}
-                                       FORMAT JSON
                                        '''.format(dimension_with_alias=dim_with_alias[0],dimension=dim[0], metric_counts=metric_counts,
                                                   date1=date['date1'],sort_column=sort_column_in_query,site_filt=site_filt,
-                                                  date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,
+                                                  date2=date['date2'], filt=filt, limit=limit,sort_order=sort_order,group_by=group_by,
                                                   table=table.format(dimension=dim[0]), date_field=date_field)
+                    #Если текущий параметр содержит в себе _path то изменяе строку запроса
+                    if '_path' in dim[0]:
+                        q="SELECT {dimension},replaceAll(replaceAll(toString(groupUniqArray(visitorId)),'[','('),']',')') as visitorId,{sum_metric_string} FROM ({q}) GROUP BY {dimension}".format(dimension=dim[0],q=q.replace('SELECT','SELECT visitorId,'),sum_metric_string=sum_metric_string)
                     print(q)
-                    array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
-
-            dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1)
+                    array_dates.append(json.loads(get_clickhouse_data(q+' FORMAT JSON ', 'http://46.4.81.36:8123'))['data'])
+            #если необходимо экспортировать статистику в xlsx
+            if export=='xlsx':
+                return ToExcel(array_dates[0])
+            dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1,group_by)
             #Проверка на выдачу только нулей в показателях. Если тлько нули возвращаем пустой список
             empties=[]
             for i in array_dates:
@@ -812,6 +941,7 @@ def CHapi(request):
 
                 #определим самый большой список в array_dates
             for i in array_dates[MaxLenNum(array_dates)][:lim]:
+
                 if search_pattern.lower() not in str(i[dim[0]]).lower():
                     continue
                 stat_dict = {'label': i[dim[0]],
@@ -837,19 +967,22 @@ def CHapi(request):
                 stat_dict['dates'] = dates
                 if len(dim) > 1:
                     # Добавляем подуровень. Если параметр вычисляемый то подставляем его название из словаря time_dimensions_dict
-                    try:
-                        if dim[0] in time_dimensions_dict.keys():
-                            if type(i[dim[0]]) is int:
-                                updimensions.append("{updimension}={updimension_val}".format(updimension=time_dimensions_dict[dim[0]],updimension_val=i[dim[0]]))
+                    if '_path' in dim[0]:
+                        updimensions.append('visitorId IN {list_of_id}'.format(list_of_id=i['visitorId']))
+                    else:
+                        try:
+                            if dim[0] in time_dimensions_dict.keys():
+                                if type(i[dim[0]]) is int:
+                                    updimensions.append("{updimension}={updimension_val}".format(updimension=time_dimensions_dict[dim[0]],updimension_val=i[dim[0]]))
+                                else:
+                                    updimensions.append(
+                                        "{updimension}='{updimension_val}'".format(updimension=time_dimensions_dict[dim[0]],
+                                                                                 updimension_val=i[dim[0]]))
                             else:
-                                updimensions.append(
-                                    "{updimension}='{updimension_val}'".format(updimension=time_dimensions_dict[dim[0]],
-                                                                             updimension_val=i[dim[0]]))
-                        else:
-                            updimensions.append("{updimension}='{updimension_val}'".format(updimension_val=i[dim[0]],
-                                                                                       updimension=dim[0]))
-                    except:
-                        pass
+                                updimensions.append("{updimension}='{updimension_val}'".format(updimension_val=i[dim[0]],
+                                                                                           updimension=dim[0]))
+                        except:
+                            pass
                     up_dim=stat_dict.copy()#Передаем словарь с информацией о вернем уровне "Все файлы"
                     stat_dict['sub'] = RecStats(0, i, updimensions, table,up_dim,dim[0])
                 stats.append(stat_dict)
@@ -917,9 +1050,9 @@ def CHapi(request):
         #print(filt_string.partition('=@'))
         simple_operators=['==','!=','>=','<=','>','<']
         like_operators=['=@','!@','=^','=$','!^','!&']
-        like_str=[" LIKE '%{val}%'"," NOT LIKE '%{val}%'"," LIKE '{val}%'"," LIKE '%{val}'"," NOT LIKE '{val}%'"," NOT LIKE '%{val}'"]
+        like_str={'=@':" LIKE '%{val}%'",'!@':" NOT LIKE '%{val}%'",'=^':" LIKE '{val}%'",'=$':" LIKE '%{val}'",'!^':" NOT LIKE '{val}%'",'!&':" NOT LIKE '%{val}'"}
         match_operators=['=~','!~']
-        match_str=[" match({par}?'{val}')"," NOT match({par}?'{val}')"]
+        match_str={'=~':" match({par}?'{val}')",'!~':" NOT match({par}?'{val}')"}
         separator_indices=[]
         for i in range(len(filt_string)):
             if filt_string[i]==',' or filt_string[i]==';':
@@ -932,30 +1065,51 @@ def CHapi(request):
             else:
                 sub_str=filt_string[separator_indices[i-1]+1:separator_indices[i]]
             for j in simple_operators:
+
                 if sub_str.partition(j)[2]=='':
                     pass
                 else:
-                    try:#если значение в подфильтре целочисленное, то не добавляем кавычки
+                    first_arg=sub_str.partition(j)[0]
+                    operator = j
+                    try:
                         int(sub_str.partition(j)[2])
-                        json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://46.4.81.36:8123'))
-                        sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
+                        json.loads(get_clickhouse_data(
+                            'SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(
+                                par=sub_str.partition(j)[0], val=sub_str.partition(j)[2]), 'http://46.4.81.36:8123'))
+                        second_arg=sub_str.partition(j)[2]
                     except:
-                        if sub_str.partition(j)[0] in ['day_of_week_code','month_code',"year","minute","second"]:
-                            sub_str = sub_str.partition(j)[0] + j + sub_str.partition(j)[2]
+                        if first_arg in ['day_of_week_code', 'month_code', "year", "minute", "second"]:
+                            second_arg =sub_str.partition(j)[2]
                         else:
-                            sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
+                            second_arg= "'" + sub_str.partition(j)[2] + "'"
+                    if sub_str.partition(j)[0][0]=='!':
+                        operator=negative_condition(j)
+                        first_arg=sub_str.partition(j)[0][1:]
+                    sub_str=first_arg+operator+second_arg
                     break
-            for j in range(len(like_operators)):
-                if sub_str.partition(like_operators[j])[2]=='':
+            for j in like_operators:
+                if sub_str.partition(j)[2]=='':
                     pass
                 else:
-                    sub_str = sub_str.partition(like_operators[j])[0] +like_str[j].format(val=sub_str.partition(like_operators[j])[2])
+                    operator = j
+                    first_arg=sub_str.partition(j)[0]
+                    second_arg=sub_str.partition(j)[2]
+                    if sub_str.partition(j)[0][0]=='!':
+                        operator = negative_condition(j)
+                        first_arg = sub_str.partition(j)[0][1:]
+                    sub_str = first_arg +like_str[operator].format(val=second_arg)
                     break
-            for j in range(len(match_operators)):
-                if sub_str.partition(match_operators[j])[2]=='':
+            for j in match_operators:
+                if sub_str.partition(j)[2]=='':
                     pass
                 else:
-                    sub_str = match_str[j].format(val=sub_str.partition(match_operators[j])[2],par=sub_str.partition(match_operators[j])[0])
+                    operator = j
+                    first_arg = sub_str.partition(j)[0]
+                    second_arg = sub_str.partition(j)[2]
+                    if sub_str.partition(j)[0][0]=='!':
+                        operator = negative_condition(j)
+                        first_arg = sub_str.partition(j)[0][1:]
+                    sub_str = match_str[operator].format(val=second_arg,par=first_arg)
                     break
             try:
                 end_filt=end_filt+sub_str+filt_string[separator_indices[i]]
@@ -969,14 +1123,19 @@ def CHapi(request):
                 .replace('day_of_week',"dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
                         lang=lang))\
             .replace('year',"toYear(toDate(serverTimestamp))").replace('minute',"toMinute(toDateTime(serverTimestamp))").replace('second',"toSecond(toDateTime(serverTimestamp))")\
-            .replace('month',"dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang)).replace('week',"concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))")\
-            .replace('quarter',"concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))))")
+            .replace('month_period',"concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp)))))").replace('week_period',"concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))")\
+            .replace('quarter_period',"concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))))").replace('week',"toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp)))")\
+            .replace('quarter',"toString(toQuarter(toDate(serverTimestamp)))").replace('month',"dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang)).replace('hour',"toHour(toDateTime(serverTimestamp))")
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
             'Authorization': 'JWT eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxOSwiZW1haWwiOiIiLCJ1c2VybmFtZSI6ImFydHVyIiwiZXhwIjoxNTE4MTIxNDIyfQ._V0PYXMrE2pJlHlkMtZ_c-_p0y0MIKsv8o5jzR5llpY',
             'Content-Type': 'application/json'}
         # Парсинг json
+        try:
+            export = json.loads(request.body.decode('utf-8'))['export']
+        except:
+            export = ""
         try:
             sort_order=json.loads(request.body.decode('utf-8'))['sort_order']
         except:
@@ -999,26 +1158,52 @@ def CHapi(request):
         for d in dimensionslist_with_segments:
             if 'segment' not in d and d!=list:
                 dimensionslist.append(d)
-                if d == 'week':
+                if '_path' in d:
+                    time_dimensions_dict[
+                        d] = "replaceAll(replaceAll(replaceAll(toString(groupUniqArray({dimension})),'\\',\\'','->'),'[\\'',''),'\\']','')".format(dimension=d[:-5])
+                    dimensionslist_with_segments_and_aliases.append(
+                        "replaceAll(replaceAll(replaceAll(toString(groupUniqArray({dimension})),'\\',\\'','->'),'[\\'',''),'\\']','') as {d}".format(dimension=d[:-5],d=d))
+                    list_with_time_dimensions_without_aliases.append(
+                        "replaceAll(replaceAll(replaceAll(toString(groupUniqArray({dimension})),'\\',\\'','->'),'[\\'',''),'\\']','')".format(
+                            dimension=d[:-5]))
+                    continue
+                if d == 'week_period':
                     time_dimensions_dict[
                         d] = "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))"
                     dimensionslist_with_segments_and_aliases.append(
-                        "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6))) as week")
+                        "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6))) as week_period")
                     list_with_time_dimensions_without_aliases.append(
                         "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))")
                     continue
-                if d == 'quarter':
+                if d == 'week':
+                    time_dimensions_dict[d] = "toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp)))"
+                    dimensionslist_with_segments_and_aliases.append("toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp))) as week")
+                    list_with_time_dimensions_without_aliases.append("toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp)))")
+                    continue
+                if d == 'quarter_period':
                     time_dimensions_dict[
-                        d] = " concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp)))))"
+                        d] = "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp)))))"
                     dimensionslist_with_segments_and_aliases.append(
-                        " concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))) as quarter")
+                        " concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))) as quarter_period")
                     list_with_time_dimensions_without_aliases.append(
-                        " concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp)))))")
+                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp)))))")
+                    continue
+                if d == 'quarter':
+                    time_dimensions_dict[d] = "toString(toQuarter(toDate(serverTimestamp)))"
+                    dimensionslist_with_segments_and_aliases.append("toString(toQuarter(toDate(serverTimestamp))) as quarter")
+                    list_with_time_dimensions_without_aliases.append("toString(toQuarter(toDate(serverTimestamp)))")
                     continue
                 if d == 'month':
                     time_dimensions_dict[d] = "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang)
                     dimensionslist_with_segments_and_aliases.append("dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp)))) as month".format(lang=lang))
                     list_with_time_dimensions_without_aliases.append("dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang))
+                    continue
+                if d=='month_period':
+                    time_dimensions_dict[d] = "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp)))))"
+                    dimensionslist_with_segments_and_aliases.append(
+                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp))))) as month_period")
+                    list_with_time_dimensions_without_aliases.append(
+                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp)))))")
                     continue
                 if d == 'second':
                     time_dimensions_dict[d]="toSecond(toDateTime(serverTimestamp))"
@@ -1030,6 +1215,11 @@ def CHapi(request):
                     dimensionslist_with_segments_and_aliases.append("toMinute(toDateTime(serverTimestamp)) as minute")
                     list_with_time_dimensions_without_aliases.append("toMinute(toDateTime(serverTimestamp))")
                     continue
+                if d == 'hour':
+                    time_dimensions_dict[d]="toHour(toDateTime(serverTimestamp))"
+                    dimensionslist_with_segments_and_aliases.append("toHour(toDateTime(serverTimestamp)) as hour")
+                    list_with_time_dimensions_without_aliases.append("toHour(toDateTime(serverTimestamp))")
+                    continue
                 if d == 'year':
                     time_dimensions_dict[d]="toYear(toDate(serverTimestamp))"
                     dimensionslist_with_segments_and_aliases.append("toYear(toDate(serverTimestamp)) as year")
@@ -1039,13 +1229,6 @@ def CHapi(request):
                     time_dimensions_dict[d]="toDayOfWeek(toDate(serverTimestamp))"
                     dimensionslist_with_segments_and_aliases.append("toDayOfWeek(toDate(serverTimestamp)) as day_of_week_code")
                     list_with_time_dimensions_without_aliases.append("toDayOfWeek(toDate(serverTimestamp))")
-                    continue
-                if d=='month_code':
-                    time_dimensions_dict[d] = "toMonth(toDate(serverTimestamp))"
-                    dimensionslist_with_segments_and_aliases.append(
-                        "toMonth(toDate(serverTimestamp)) as month_code")
-                    list_with_time_dimensions_without_aliases.append(
-                        "toMonth(toDate(serverTimestamp))")
                     continue
                 if d=='date':
                     time_dimensions_dict[d] = "toDate(serverTimestamp)"
@@ -1066,17 +1249,15 @@ def CHapi(request):
                             lang=lang))
                     continue
                 list_with_time_dimensions_without_aliases.append(d)
-
             dimensionslist_with_segments_and_aliases.append(d)
 
         metrics = json.loads(request.body.decode('utf-8'))['metrics']
-        print(metrics)
         # сортировка по переданному показателю
         try:
             sort_column = json.loads(request.body.decode('utf-8'))['sort_column']
         except:
             sort_column = ""
-        if sort_column not in metrics and sort_column!="":
+        if sort_column not in metrics and sort_column!="" and sort_column not in get_all_dimensions() and '_path' not in sort_column:
             metrics.append(sort_column)
         # строка  "sum(metric1),avg(metric2)...". если показатель относительный используется avg, если нет - sum
         sum_metric_string=[]
@@ -1123,6 +1304,8 @@ def CHapi(request):
             attribution_lookup_period=json.loads(request.body.decode('utf-8'))['attribution_lookup_period']
         except:
             attribution_lookup_period=""
+        site_filt=' 1' # по умолчанию фильтра по idSite нет
+
         try:
             profile_id=json.loads(request.body.decode('utf-8'))['profile_id']
             try:
@@ -1140,8 +1323,6 @@ def CHapi(request):
                     # вторую дату увеличиваем на день
                     date2=(datetime.strptime(date['date2'], '%Y-%m-%d') - timedelta(
                                 days=-1)).strftime('%Y-%m-%d')
-
-
                     if time_offset[0] == '+':
                         relative_period.append({'date1': str(
                             datetime.strptime(date['date1'] + '-00', '%Y-%m-%d-%H') - timedelta(
@@ -1158,7 +1339,6 @@ def CHapi(request):
             except:
                 relative_period=period
                 date_field = 'serverDate'
-                site_filt=' 1'
             try:
                 if json.loads(get_clickhouse_data(
                         'SELECT idSite FROM CHdatabase.hits_with_visits WHERE idSite={idSite} FORMAT JSON'.format(
@@ -1176,10 +1356,7 @@ def CHapi(request):
         except:
             relative_period=period
             date_field = 'serverDate'
-            site_filt=' 1'
 
-        #print(json.loads(requests.get('https://s.analitika.online/api/profiles/{profile_id}/'.format(profile_id=profile_id), headers=headers).content.decode('utf-8')))
-        print(relative_period)
 
         table = 'CHdatabase.hits_with_visits'
         list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
@@ -1208,7 +1385,7 @@ def CHapi(request):
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
 
         # ФОрмируем массив с запросом каждого показателя в SQL
-        metric_counts_list=MetricCounts(metrics,headers)
+        table,metric_counts_list=MetricCounts(metrics,headers,table)
         metric_counts=','.join(metric_counts_list)
         # Заполнение таблицы с рекламной статистикой
         load_query = "INSERT INTO CHdatabase.adstat VALUES "
@@ -1229,12 +1406,22 @@ def CHapi(request):
         resp['counts'] = {}
         resp['counts']=AddCounts(period,dimension_counts,filt,sort_order,table,date_filt)
         # Добавляем в выходной словарь параметр metric_sums
+
         resp['metric_sums']={}
-        resp['metric_sums']['dates'] = AddMetricSums(period,metric_counts_list,filt,metrics,sort_order,table)
+        total,total_filtered,resp['metric_sums']['dates'] = AddMetricSums(period,metric_counts_list,filt,metrics,sort_order,table)
         stats=AddStats2(dimensionslist_with_segments,dimensionslist_with_segments_and_aliases,metric_counts,filt,limit,period,metrics,table,date_filt)
         # Добавляем stats
         resp['stats']=stats
         pprint.pprint(resp)
+
+        if export=='xlsx':
+            filename =stats
+            content_type = 'application/vnd.ms-excel'
+            file_path = os.path.join(MEDIA_ROOT, filename)
+            response = HttpResponse(FileWrapper(open(file_path, 'rb')), content_type=content_type)
+            response['Content-Disposition'] = 'attachment; filename=%s' % (filename)
+            response['Content-Length'] = os.path.getsize(file_path)
+            return response
         response=JsonResponse(resp,safe=False,)
         response['Access-Control-Allow-Origin']='*'
         return response
@@ -1582,11 +1769,12 @@ def diagram_stat(request):
         #filt_string=filt_string.replace(',',' OR ')
         #filt_string = filt_string.replace(';', ' AND ')
         #print(filt_string.partition('=@'))
-        simple_operators=['==','!=','>=','<=','>','<']
-        like_operators=['=@','!@','=^','=$','!^','!&']
-        like_str=[" LIKE '%{val}%'"," NOT LIKE '%{val}%'"," LIKE '{val}%'"," LIKE '%{val}'"," NOT LIKE '{val}%'"," NOT LIKE '%{val}'"]
-        match_operators=['=~','!~']
-        match_str=[" match({par}?'{val}')"," NOT match({par}?'{val}')"]
+        simple_operators = ['==', '!=', '>=', '<=', '>', '<']
+        like_operators = ['=@', '!@', '=^', '=$', '!^', '!&']
+        like_str = {'=@': " LIKE '%{val}%'", '!@': " NOT LIKE '%{val}%'", '=^': " LIKE '{val}%'",
+                    '=$': " LIKE '%{val}'", '!^': " NOT LIKE '{val}%'", '!&': " NOT LIKE '%{val}'"}
+        match_operators = ['=~', '!~']
+        match_str = {'=~': " match({par}?'{val}')", '!~': " NOT match({par}?'{val}')"}
         separator_indices=[]
         for i in range(len(filt_string)):
             if filt_string[i]==',' or filt_string[i]==';':
@@ -1599,30 +1787,51 @@ def diagram_stat(request):
             else:
                 sub_str=filt_string[separator_indices[i-1]+1:separator_indices[i]]
             for j in simple_operators:
+
                 if sub_str.partition(j)[2]=='':
                     pass
                 else:
-                    try:#если значение в подфильтре целочисленное, то не добавляем кавычки
+                    first_arg=sub_str.partition(j)[0]
+                    operator = j
+                    try:
                         int(sub_str.partition(j)[2])
-                        json.loads(get_clickhouse_data('SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(par=sub_str.partition(j)[0],val=sub_str.partition(j)[2]), 'http://46.4.81.36:8123'))
-                        sub_str = sub_str.partition(j)[0] + j +sub_str.partition(j)[2]
+                        json.loads(get_clickhouse_data(
+                            'SELECT {par}=={val} FROM CHdatabase.visits ALL INNER JOIN CHdatabase.hits USING idVisit LIMIT 1 FORMAT JSON'.format(
+                                par=sub_str.partition(j)[0], val=sub_str.partition(j)[2]), 'http://46.4.81.36:8123'))
+                        second_arg=sub_str.partition(j)[2]
                     except:
-                        if sub_str.partition(j)[0] in ['day_of_week_code','month_code',"year","minute","second"]:
-                            sub_str = sub_str.partition(j)[0] + j + sub_str.partition(j)[2]
+                        if first_arg in ['day_of_week_code', 'month_code', "year", "minute", "second"]:
+                            second_arg =sub_str.partition(j)[2]
                         else:
-                            sub_str=sub_str.partition(j)[0]+j+"'"+sub_str.partition(j)[2]+"'"
+                            second_arg= "'" + sub_str.partition(j)[2] + "'"
+                    if sub_str.partition(j)[0][0]=='!':
+                        operator=negative_condition(j)
+                        first_arg=sub_str.partition(j)[0][1:]
+                    sub_str=first_arg+operator+second_arg
                     break
-            for j in range(len(like_operators)):
-                if sub_str.partition(like_operators[j])[2]=='':
+            for j in like_operators:
+                if sub_str.partition(j)[2]=='':
                     pass
                 else:
-                    sub_str = sub_str.partition(like_operators[j])[0] +like_str[j].format(val=sub_str.partition(like_operators[j])[2])
+                    operator = j
+                    first_arg=sub_str.partition(j)[0]
+                    second_arg=sub_str.partition(j)[2]
+                    if sub_str.partition(j)[0][0]=='!':
+                        operator = negative_condition(j)
+                        first_arg = sub_str.partition(j)[0][1:]
+                    sub_str = first_arg +like_str[operator].format(val=second_arg)
                     break
-            for j in range(len(match_operators)):
-                if sub_str.partition(match_operators[j])[2]=='':
+            for j in match_operators:
+                if sub_str.partition(j)[2]=='':
                     pass
                 else:
-                    sub_str = match_str[j].format(val=sub_str.partition(match_operators[j])[2],par=sub_str.partition(match_operators[j])[0])
+                    operator = j
+                    first_arg = sub_str.partition(j)[0]
+                    second_arg = sub_str.partition(j)[2]
+                    if sub_str.partition(j)[0][0]=='!':
+                        operator = negative_condition(j)
+                        first_arg = sub_str.partition(j)[0][1:]
+                    sub_str = match_str[operator].format(val=second_arg,par=first_arg)
                     break
             try:
                 end_filt=end_filt+sub_str+filt_string[separator_indices[i]]
@@ -1632,12 +1841,26 @@ def diagram_stat(request):
         end_filt=end_filt.replace(',',' OR ')
         end_filt=end_filt.replace(';',' AND ')
         end_filt = end_filt.replace('?', ',')
-        return end_filt.replace('date','toDate(serverTimestamp)').replace('month_code','toMonth(toDate(serverTimestamp))').replace('day_of_week_code',"toDayOfWeek(toDate(serverTimestamp))")\
-                .replace('day_of_week',"dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
-                        lang=lang))\
-            .replace('year',"toYear(toDate(serverTimestamp))").replace('minute',"toMinute(toDateTime(serverTimestamp))").replace('second',"toSecond(toDateTime(serverTimestamp))")\
-            .replace('month',"dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang)).replace('week',"concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))")\
-            .replace('quarter',"concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))))")
+        return end_filt.replace('hour',"toHour(toDateTime(serverTimestamp))").replace('date', 'toDate(serverTimestamp)').replace('month_code',
+                                                                           'toMonth(toDate(serverTimestamp))').replace(
+            'day_of_week_code', "toDayOfWeek(toDate(serverTimestamp))") \
+            .replace('day_of_week',
+                     "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
+                         lang=lang)) \
+            .replace('year', "toYear(toDate(serverTimestamp))").replace('minute',
+                                                                        "toMinute(toDateTime(serverTimestamp))").replace(
+            'second', "toSecond(toDateTime(serverTimestamp))") \
+            .replace('month_period',
+                     "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp)))))").replace(
+            'week_period',
+            "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))") \
+            .replace('quarter_period',
+                     "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))))").replace(
+            'week',
+            "toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp)))") \
+            .replace('quarter', "toString(toQuarter(toDate(serverTimestamp)))").replace('month',
+                                                                                        "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(
+                                                                                            lang=lang))
     if request.method=='POST':
         #Заголовки для запроса сегментов
         headers = {
@@ -1671,24 +1894,35 @@ def diagram_stat(request):
             if 'segment' not in d and d != list:
                 dimensionslist.append(d)
                 if d == 'month':
-                    time_dimensions_dict[
-                        d] = "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(
-                        lang=lang)
+                    time_dimensions_dict[d] = "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang)
+                    dimensionslist_with_aliases.append("dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp)))) as month".format(lang=lang))
+                    continue
+                if d == 'month_period':
+                    time_dimensions_dict[d] = "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp)))))"
                     dimensionslist_with_aliases.append(
-                        "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp)))) as month".format(
-                            lang=lang))
+                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp))))) as month_period")
                     continue
                 if d == 'quarter':
+                    time_dimensions_dict[d] = "toQuarter(toDate(serverTimestamp))"
+                    dimensionslist_with_aliases.append("toQuarter(toDate(serverTimestamp)) as quarter")
+                    continue
+                if d == 'quarter_period':
                     time_dimensions_dict[
                         d] = "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp)))))"
                     dimensionslist_with_aliases.append(
-                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))) as quarter")
+                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))) as quarter_period")
                     continue
                 if d == 'week':
                     time_dimensions_dict[
+                        d] = "toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp)))"
+                    dimensionslist_with_aliases.append(
+                        "toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp))) as week")
+                    continue
+                if d == 'week_period':
+                    time_dimensions_dict[
                         d] = "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))"
                     dimensionslist_with_aliases.append(
-                        "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6))) as week")
+                        "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6))) as week_period")
                     continue
                 if d == 'second':
                     time_dimensions_dict[d] = "toSecond(toDateTime(serverTimestamp))"
@@ -1698,6 +1932,10 @@ def diagram_stat(request):
                     time_dimensions_dict[d] = "toMinute(toDateTime(serverTimestamp))"
                     dimensionslist_with_aliases.append("toMinute(toDateTime(serverTimestamp)) as minute")
                     continue
+                if d == 'hour':
+                    time_dimensions_dict[d] = "toHour(toDateTime(serverTimestamp))"
+                    dimensionslist_with_aliases.append("toHour(toDateTime(serverTimestamp)) as hour")
+                    continue
                 if d == 'year':
                     time_dimensions_dict[d] = "toYear(toDate(serverTimestamp))"
                     dimensionslist_with_aliases.append("toYear(toDate(serverTimestamp)) as year")
@@ -1706,11 +1944,6 @@ def diagram_stat(request):
                     time_dimensions_dict[d] = "toDayOfWeek(toDate(serverTimestamp))"
                     dimensionslist_with_aliases.append(
                         "toDayOfWeek(toDate(serverTimestamp)) as day_of_week_code")
-                    continue
-                if d == 'month_code':
-                    time_dimensions_dict[d] = "toMonth(toDate(serverTimestamp))"
-                    dimensionslist_with_aliases.append(
-                        "toMonth(toDate(serverTimestamp)) as month_code")
                     continue
                 if d == 'date':
                     time_dimensions_dict[d] = "toDate(serverTimestamp)"
@@ -1756,6 +1989,7 @@ def diagram_stat(request):
         else:
             having = 'HAVING'+' '+FilterParse(filter_metric)
         #если список dimensionslist пуст, значит были переданы только сегменты
+        site_filt=' 1'#льтр по idSite(по умолчанию нет)
         try:
             profile_id=json.loads(request.body.decode('utf-8'))['profile_id']
             try:
@@ -1782,13 +2016,11 @@ def diagram_stat(request):
                         hours=-int(time_offset[2]) - 3))
                     relative_date2 = str(datetime.strptime(d2 + '-00', '%Y-%m-%d-%H') - timedelta(
                         hours=-int(time_offset[2]) - 3))
-
                 date_field='toDateTime(serverTimestamp)'
             except:
                 relative_date1=date1
                 relative_date2 = date2
                 date_field = 'serverDate'
-                site_filt=' 1'
             try:
                 if json.loads(get_clickhouse_data(
                         'SELECT idSite FROM CHdatabase.hits_with_visits WHERE idSite={idSite} FORMAT JSON'.format(
@@ -1807,7 +2039,6 @@ def diagram_stat(request):
             relative_date1=date1
             relative_date2= date2
             date_field = 'serverDate'
-            site_filt=' 1'
 
         table = 'CHdatabase.hits_with_visits'
         list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
@@ -1826,8 +2057,6 @@ def diagram_stat(request):
                 is_ad = True
                 break
 
-
-
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
         for i in dimensionslist:
@@ -1836,9 +2065,8 @@ def diagram_stat(request):
             else:
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
 
-
         # ФОрмируем массив с запросом каждого показателя в SQL
-        metric_counts_list = MetricCounts(metrics, headers)
+        table,metric_counts_list = MetricCounts(metrics, headers,table)
         metric_counts = ','.join(metric_counts_list)
         #Добавляем в выходной словарь параметр counts
         resp={}#Выходной словарь
