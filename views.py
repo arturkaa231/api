@@ -192,32 +192,32 @@ def MetricCounts(metrics, headers,table,dimensionslist):
                         'https://s.analitika.online/api/reference/goal_groups/{id}?all=1'.format(id=i.partition("_conversion")[0][9:]),
                             headers=headers).content.decode('utf-8'))['goals_code']:
                         query.append("CAST(sum(Type='goal' AND goalId={N}),'Int')".format(N=goal[4:]))
-                    print(query)
                     query='+'.join(query) #строка запроса с суммой goalN
                     #если в показателе есть _conversion, то вычисляем относительный показатель(делим на колчество визитов)
                     if '_conversion' in i:
                         metric_counts.append('if(uniq(idVisit)=0,0,floor(('+query+')*100/uniq(idVisit),2))  as goalgroup{N}_conversion'.format(
                         N=i.partition("_conversion")[0][9:]))
-                        print('if(uniq(idVisit)=0,0,floor(('+query+')*100/uniq(idVisit),2))  as goalgroup{N}_conversion'.format(
-                        N=i.partition("_conversion")[0][9:]))
+                    elif '_cost' in i :
+                        metric_counts.append('floor(sum(Cost)/'+query+',2) as goalgroup{N}_cost'.format(N=i[9:]))
                     else:
-                        print(query+' as goalgroup{N}'.format(N=i[9:]))
-                        metric_counts.append(query+' as goalgroup{N}'.format(N=i[9:]))
-
+                        metric_counts.append(query + ' as goalgroup{N}'.format(N=i[9:]))
                 except:
-                    pass
+                    continue
             elif '_conversion' in i:
                 metric_counts.append(
                     " if(uniq(idVisit)=0,0,floor((sum(Type='goal' and goalId={N})/uniq(idVisit))*100,2)) as goal{N}_conversion".format(
                         N=i.partition("_conversion")[0][4:]))
             else:
-                metric_counts.append("CAST(sum(Type='goal' AND goalId={N}),'Int') as goal{N}".format(N=i[4:]))
+                if 'cost' in i:
+                    metric_counts.append("floor(sum(Cost)/sum(Type='goal' AND goalId={N}),2) as goal{N}_cost".format(N=i[4:]))
+                else:
+                    metric_counts.append("CAST(sum(Type='goal' AND goalId={N}),'Int') as goal{N}".format(N=i[4:]))
         if i == "nb_visits":
             metric_counts.append("CAST(uniq(idVisit),'Int') as nb_visits")
         if i in ['clicks', 'cost', 'impressions','ctr']:
             metr="CAST(sum({Metric}),'Int') as {metric}".format(metric=i,Metric=i.capitalize())
             if i=='ctr':
-                metr="if(sum(impressions)=0, 0, floor((sum(clicks) / sum(impressions)) * 100, 2)) as {metric}".format(metric=i)
+                metr="if(sum(Impressions)=0, 0, floor((sum(Clicks) / sum(Impressions)) * 100, 2)) as {metric}".format(metric=i)
             # Если в dimensions переданы только сегменты или параметры, которых нет в adstat, то меняем таблицу и записываем нули в рекламные показатели
             if dimensionslist==[]:
                 metr = "0 as {metric}".format(metric=i)
@@ -301,7 +301,7 @@ def CHapi(request):
                                                       filt=filt, limit=limit,site_filt=site_filt,group_by=group_by,
                                                       sort_order=sort_order,
                                                       table=table.format(dimension=dim), date_filt=date_filt)
-
+        print(q_all)
         all_labeldicts = json.loads(get_clickhouse_data(q_all, 'http://46.4.81.36:8123'))['data']
 
         all_label = []
@@ -502,8 +502,8 @@ def CHapi(request):
             if attribution_model == 'first_interaction':
                 for date in relative_period:
                     date0 = (datetime.strptime(date['date1'], time_format) - timedelta(days=int(attribution_lookup_period))).strftime(time_format)
-                    q = '''SELECT {dimension},{sum_metric_string}
-                               FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
+                    q = '''SELECT alias as {dimension},{sum_metric_string}
+                               FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
                                WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
                                ALL INNER JOIN
@@ -525,8 +525,8 @@ def CHapi(request):
             elif attribution_model == 'last_non-direct_interaction':
                 for date in relative_period:
                     date0 = (datetime.strptime(date['date1'], '%Y-%m-%d') - timedelta(days=int(attribution_lookup_period))).strftime('%Y-%m-%d')
-                    q = '''SELECT {dimension},{sum_metric_string}
-                               FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
+                    q = '''SELECT alias as {dimension},{sum_metric_string}
+                               FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
                                WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
                                ALL INNER JOIN
@@ -625,8 +625,8 @@ def CHapi(request):
             elif attribution_model=='first_interaction':
 
                 date0 = (datetime.strptime(relative_period[0]['date1'], time_format) - timedelta(days=int(attribution_lookup_period))).strftime(time_format)
-                q = '''SELECT CAST(uniq({dimension}),'Int') as h{dimension}
-                                    FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
+                q = '''SELECT CAST(uniq(alias),'Int') as h{dimension}
+                                    FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
                                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                     AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
                                     ALL INNER JOIN
@@ -642,8 +642,8 @@ def CHapi(request):
                                                                   table=tab.format(dimension=dimensionslist[dim_num]),
                                                                   date_field=date_field)
             elif attribution_model=='last_non-direct_interaction':
-                q = '''SELECT CAST(uniq({dimension}),'Int') as h{dimension}
-                                                    FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
+                q = '''SELECT CAST(uniq(alias),'Int') as h{dimension}
+                                                    FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
                                                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                                     AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
                                                     ALL INNER JOIN
@@ -804,10 +804,7 @@ def CHapi(request):
         return st_d
     def AddStats2(dim,dim_with_alias, metric_counts, filt, limit, period, metrics, table,date_filt):
         """Добавление ключа stats в ответ"""
-        if dimensionslist == []:
-            table = table
-        else:
-            table = table.format(dimension=dim[0])
+       
         stats = []
         #Определяем, есть ли вначале dimensions группа сегментов
         if type(dim[0])==list:
@@ -893,15 +890,12 @@ def CHapi(request):
             if attribution_model=='first_interaction':
                 for date in relative_period:
                     date0=(datetime.strptime(date['date1'], time_format) - timedelta(days=int(attribution_lookup_period))).strftime(time_format)
-                    q = '''SELECT {dimension},{sum_metric_string}
-                    FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
-                    WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                    q = '''SELECT alias as {dimension_without_aliases},{sum_metric_string} FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
+                    WHERE  visitorId IN (SELECT visitorId FROM CHdatabase.hits_with_visits WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                     AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
                     ALL INNER JOIN
                     (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
-                    USING visitorId
-                    GROUP BY {group_by}
-                    ORDER BY {sort_column} {sort_order}
+                    USING visitorId GROUP BY {group_by} ORDER BY {sort_column} {sort_order}
                     {limit}
                                        FORMAT JSON
                                        '''.format(dimension_with_alias=dim_with_alias[0],date0=str(date0),dimension=dim[0],dimension_without_aliases=list_with_time_dimensions_without_aliases[0],
@@ -911,10 +905,11 @@ def CHapi(request):
                                                   table=table, date_field=date_field)
                     print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
+
             elif  attribution_model=='last_non-direct_interaction':
                 for date in relative_period:
-                    q = '''SELECT {dimension},{sum_metric_string}
-                    FROM (SELECT visitorId,any({dimension_without_aliases}) as {dimension} FROM {table}
+                    q = '''SELECT alias as {dimension_without_aliases},{sum_metric_string}
+                    FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                     AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
                     ALL INNER JOIN
@@ -1419,12 +1414,15 @@ def CHapi(request):
         table,metric_counts_list=MetricCounts(metrics,headers,table,dimensionslist)
         metric_counts=','.join(metric_counts_list)
         # Заполнение таблицы с рекламной статистикой
-        load_query = "INSERT INTO CHdatabase.adstat VALUES "
 
-        #for part in json.loads(requests.get('https://s.analitika.online/api/ad_stat/?all=1', headers=headers).content.decode('utf-8'))['results']:
-            #query = load_query + "(" + str(list(part.values()))[1:len(str(list(part.values()))) - 1] + ")"
-            #query = query.replace("None", "'none'")
-            #get_clickhouse_data(query, 'http://46.4.81.36:8123')
+        """load_query = "INSERT INTO CHdatabase.adstat VALUES "
+        next='https://s.analitika.online/api/ad_stat/?all=1'
+        while json.loads(requests.get(next, headers=headers).content.decode('utf-8'))['next']!='null':
+            for part in json.loads(requests.get(next, headers=headers).content.decode('utf-8'))['results']:
+                query = load_query + "(" + str(list(part.values())[1:])[1:len(str(list(part.values())[1:])) - 1] + ",1)"
+                query = query.replace("None", "'none'")
+                get_clickhouse_data(query, 'http://46.4.81.36:8123')
+            next=json.loads(requests.get(next, headers=headers).content.decode('utf-8'))['next']"""
         #Фильтр по всем датам
         date_filt = []
         for dates in relative_period:
