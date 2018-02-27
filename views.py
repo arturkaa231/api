@@ -37,7 +37,8 @@ def get_adstat_dimensions():
     #Дописать
     all_dimensions=['idSite','AdCampaignId','AdBannerId','AdChannelId','AdDeviceType','AdGroupId','AdKeywordId','AdPosition','AdPositionType',
                     'AdRegionId','AdRetargetindId','AdPlacement','AdTargetId','AdvertisingSystem','DRF','campaignContent','campaignKeyword','campaignMedium',
-                    'campaignName','campaignSource','StatDate','Impressions','Clicks','Cost']
+                    'campaignName','campaignSource','StatDate','Impressions','Clicks','Cost','month','month_period','quarter','quarter_period','week','week_period','second',
+                    'minute','hour','year','day_of_week_code','date','day_of_week']
     return all_dimensions
 def negative_condition(condition):
     negatives = {
@@ -88,7 +89,22 @@ def get_query_for_metric_name(metric):
                         }
 
     return metrics_query_dict[metric]
-
+def get_time_dimensions(key):
+    all_time_dimensions = {'month': "dictGetString('month','{lang}',toUInt64(toMonth({date_field})))",
+                           'month_period': "concat(toString(toYear({date_field})),concat('-',toString(toMonth({date_field}))))",
+                           'quarter': "toQuarter({date_field})",
+                           'quarter_period': "concat(toString(toYear({date_field})),concat('-',toString(toQuarter({date_field}))))",
+                           'week': "toRelativeWeekNum({date_field}) - toRelativeWeekNum(toStartOfYear({date_field}))",
+                           'week_period': "concat(toString(toMonday({date_field})),concat(' ',toString(toMonday({date_field}) +6)))",
+                           'second': "toSecond(toDateTime({date_field}))",
+                           'minute': "toMinute(toDateTime({date_field}))",
+                           'hour': "toHour(toDateTime({date_field}))",
+                           'year': "toYear({date_field})",
+                           'day_of_week_code': "toDayOfWeek({date_field})",
+                           'date': "{date_field}",
+                           'day_of_week': "dictGetString('week','{lang}',toUInt64(toDayOfWeek({date_field})))"
+                           }
+    return all_time_dimensions[key]
 def MetricCounts(metrics, headers,dimensionslist,is_all_segments,attribution_model):
     metric_counts = []
     ad_metric_counts = []
@@ -228,15 +244,15 @@ def CHapi(request):
         df.to_excel(writer, 'Sheet1', index=False)
         writer.save()
         return excel_name
-    def datesdicts(array_dates, dim,dim_with_alias,table,date_filt,updm,group_by):
+    def datesdicts(array_dates, dim,dim_with_alias,ad_dim_with_alias,table,date_filt,updm,group_by):
         q_all = '''SELECT {dimension_with_alias} FROM {table}
                                            WHERE 1 {filt} AND {site_filt} AND {date_filt} AND {updm}
                                            GROUP BY {group_by}
                                            '''
         if is_two_tables:
-            q_all="SELECT {dimension} FROM ("+q_all+""") ALL FULL OUTER JOIN (SELECT {dimension_with_alias} FROM CHdatabase.adstat
+            q_all="SELECT {dimension} FROM ("+q_all+""") ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias} FROM CHdatabase.adstat
                             WHERE 1 {filt} AND {site_filt} AND {ad_date_filt} AND {updm} GROUP BY {group_by}) USING {dimension}"""
-        q_all=q_all.format(dimension_with_alias=dim_with_alias,dimension=dim,updm=updm,date_filt=date_filt,
+        q_all=q_all.format(dimension_with_alias=dim_with_alias,ad_dimension_with_alias=ad_dim_with_alias,dimension=dim,updm=updm,date_filt=date_filt,
                         site_filt=site_filt, filt=filt,group_by=group_by,ad_date_filt=ad_date_filt,table=table)
 
         all_labeldicts = json.loads(get_clickhouse_data(q_all+' {limit} FORMAT JSON'.format(limit=limit), 'http://46.4.81.36:8123'))['data']
@@ -320,18 +336,23 @@ def CHapi(request):
             counter=0
             for date in relative_period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
-                                                                      WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {updimensions}
-                                                                      FORMAT JSON
-                                                                    '''.format(
-                    label_val=seg_label,site_filt=site_filt,
-                    segment_val=seg,
-                    updimensions=updm,
-                    metric_counts=metric_counts,
-                    date1=date['date1'],
-                    date2=date['date2'], filt=filt,
-                    table=table, date_field=date_field)
+                                       WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt} AND {updm}
+                                                                                                    '''
+                if is_two_tables:
+                    q = "SELECT label,segment,{metrics} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT '{label_val}' as label,'{segment_val}' as segment,{ad_metric_counts} FROM CHdatabase.adstat
+                                      WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt} AND {updm}) USING label LIMIT 1"""
+                q = q.format(label_val=seg_label,
+                             site_filt=site_filt,
+                             segment_val=seg, updm=updm,
+                             seg_filt=FilterParse(seg_filt.replace("'", '')),
+                             metric_counts=metric_counts,
+                             ad_date_field=ad_date_field,
+                             ad_metric_counts=ad_metric_counts,
+                             date1=date['date1'], metrics=','.join(metrics),
+                             date2=date['date2'], filt=filt,
+                             table=table, date_field=date_field)
 
-                array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
+                array_dates.append(json.loads(get_clickhouse_data(q+' FORMAT JSON', 'http://46.4.81.36:8123'))['data'])
                 # Если сегмент пуст, добавляем нулевые значение в dates
                 if array_dates[counter] == []:
                     empty_dict = {'label': seg_label,
@@ -437,14 +458,14 @@ def CHapi(request):
                     date0 = (datetime.strptime(date['date1'], time_format) - timedelta(days=int(attribution_lookup_period))).strftime(time_format)
                     q = '''SELECT alias as {dimension_without_aliases},{sum_metric_string} FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
                                         WHERE  visitorId IN (SELECT visitorId FROM CHdatabase.hits_with_visits WHERE 1 {filt} AND {site_filt} AND {updimensions} AND {date_field} BETWEEN '{date1}' AND '{date2}')
-                                        AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
+                                        AND {date_field} BETWEEN '{date0}' AND '{date2}' {filt} AND {updimensions} GROUP BY visitorId)
                                         ALL INNER JOIN
                                         (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {updimensions} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
                                         USING visitorId GROUP BY {group_by}'''
                     if is_two_tables:
-                        q = "SELECT {dimension},{metrics} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
+                        q = "SELECT {dimension},{metrics} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
                                                                     WHERE 1 {filt} AND {site_filt} AND {updimensions} AND {ad_date_field}  BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
-                    q = q.format(table=table, dimension_with_alias=dimensionslist_with_segments_and_aliases[n+1], dimension=dimension,
+                    q = q.format(table=table, dimension_with_alias=dimensionslist_with_segments_and_aliases[n+1],ad_dimension_with_alias=ad_dimensionslist_with_segments_and_aliases[n+1], dimension=dimension,
                                  sum_metric_string=sum_metric_string, date0=str(date0),updimensions=updm,
                                  metric_counts=metric_counts, date1=date['date1'], ad_metric_counts=ad_metric_counts,
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,
@@ -459,15 +480,15 @@ def CHapi(request):
                     q = '''SELECT alias as {dimension_without_aliases},{sum_metric_string}
                                FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
                                WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {updimensions} AND {date_field} BETWEEN '{date1}' AND '{date2}')
-                               AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
+                               AND {date_field} < '{date2}' AND referrerType!='direct' {filt} AND {updimensions} GROUP BY visitorId)
                                ALL INNER JOIN
-                               (SELECT {metric_counts},visitorId,{dimension} FROM {table} WHERE 1 {filt} AND {updimensions} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimension},visitorId)
+                               (SELECT {metric_counts},visitorId,{dimension_with_alias} FROM {table} WHERE 1 {filt} AND {updimensions} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimension},visitorId)
                                USING visitorId GROUP BY {group_by}'''
                     if is_two_tables:
-                        q = "SELECT {dimension},{metrics} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
+                        q = "SELECT {dimension},{metrics} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
                                                                                         WHERE 1 {filt} AND {site_filt} AND {updimensions} AND {ad_date_field}  BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
                     q = q.format(table=table, dimension_with_alias=dimensionslist_with_segments_and_aliases[n + 1],
-                                 dimension=dimension,
+                                 dimension=dimension,ad_dimension_with_alias=ad_dimensionslist_with_segments_and_aliases[n+1],
                                  sum_metric_string=sum_metric_string, updimensions=updm,
                                  metric_counts=metric_counts, date1=date['date1'], ad_metric_counts=ad_metric_counts,
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,
@@ -486,16 +507,16 @@ def CHapi(request):
                                                           GROUP BY {group_by}'''
                     # Если в запросе к апи были запрошены рекламные показатели или поля, которые есть только в таблице adstat, то объединяем таблицы с хитами и визитами с adstat
                     if is_two_tables:
-                        q = "SELECT {dimension},{metrics} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
+                        q = "SELECT {dimension},{metrics} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
                                                WHERE 1 {filt} AND {site_filt} AND {updimensions} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
                     q = q.format(table=table, dimension_with_alias=dimensionslist_with_segments_and_aliases[n+1], dimension=dimension,
                                  metric_counts=metric_counts, date1=date['date1'], ad_metric_counts=ad_metric_counts,updimensions=updm,
-                                 site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,
+                                 site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,ad_dimension_with_alias=ad_dimensionslist_with_segments_and_aliases[n+1],
                                  date_field=date_field, ad_date_field=ad_date_field, metrics=','.join(metrics))
                     print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q+' ORDER BY {sort_column} {sort_order} FORMAT JSON'
                                                                       .format(sort_column=sort_column_in_query,sort_order=sort_order), 'http://46.4.81.36:8123'))['data'])
-            dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm,group_by)
+            dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],ad_dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm,group_by)
             #возвращаем пусто sub если на данном уровне все показатели равны нулю
             empties = []
             for i in array_dates:
@@ -536,7 +557,7 @@ def CHapi(request):
         """Метод для обращения к базе данных CH"""
         r=requests.post(host,params={'query':query},timeout=connection_timeout)
         return r.text
-    def AddCounts(period,dimension_counts,filt,sort_order,table,date_filt,):
+    def AddCounts(period,dimension_counts,ad_dimension_counts,filt,sort_order,table,date_filt,):
         """Добавление ключа Counts в ответ"""
         a={}
         for dim_num in range(len(dimensionslist)):
@@ -556,11 +577,11 @@ def CHapi(request):
                 q = '''SELECT CAST(uniq(alias),'Int') as h{dimension}
                                     FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
                                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
-                                    AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
+                                    AND {date_field} BETWEEN '{date0}' AND '{date2}' {filt} GROUP BY visitorId)
                                     ALL INNER JOIN
                                     (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt}  AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
                                     USING visitorId
-                                                       '''.format(dimension_with_alias=dimensionslist[dim_num],dimension_without_aliases=list_with_time_dimensions_without_aliases[dim_num],
+                                                       '''.format(dimension_with_alias=dimensionslist_with_segments_and_aliases[dim_num],dimension_without_aliases=list_with_time_dimensions_without_aliases[dim_num],
                                                                   date0=str(date0),dimension_counts=dimension_counts[dim_num],site_filt=site_filt,
                                                                   date1=relative_period[0]['date1'],dimension=dimensionslist[dim_num],
                                                                   date2=relative_period[0]['date2'], filt=filt, sort_order=sort_order,
@@ -571,12 +592,12 @@ def CHapi(request):
                 q = '''SELECT CAST(uniq(alias),'Int') as h{dimension}
                                                     FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
                                                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
-                                                    AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
+                                                    AND {date_field} < '{date2}' AND referrerType!='direct' {filt} GROUP BY visitorId)
                                                     ALL INNER JOIN
-                                                    (SELECT visitorId,{dimension} FROM {table} WHERE 1 {filt}  AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimension},visitorId)
+                                                    (SELECT visitorId,{dimension_with_alias} FROM {table} WHERE 1 {filt}  AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimension},visitorId)
                                                     USING visitorId
                                                                        '''.format(
-                    dimension_with_alias=dimensionslist[dim_num],dimension_without_aliases=list_with_time_dimensions_without_aliases[dim_num],
+                    dimension_with_alias=dimensionslist_with_segments_and_aliases[dim_num],dimension_without_aliases=list_with_time_dimensions_without_aliases[dim_num],
                     dimension_counts=dimension_counts[dim_num],site_filt=site_filt,
                     date1=relative_period[0]['date1'],dimension=dimensionslist[dim_num],
                     date2=relative_period[0]['date2'], filt=filt, sort_order=sort_order,
@@ -590,11 +611,12 @@ def CHapi(request):
                                 WHERE 1 {filt} AND {site_filt} AND {date_filt}
                                '''
                 if is_two_tables:
-                    q="""SELECT {dimension_counts} FROM (SELECT DISTINCT {dimension} FROM CHdatabase.hits_with_visits
-                            WHERE 1 {filt} AND {site_filt} AND {date_filt}) ALL FULL OUTER JOIN (SELECT DISTINCT {dimension} FROM CHdatabase.adstat
+                    q="""SELECT CAST(uniq({dimension}),'Int') as h{dimension} FROM (SELECT DISTINCT {dimension_with_alias} FROM CHdatabase.hits_with_visits
+                            WHERE 1 {filt} AND {site_filt} AND {date_filt}) ALL FULL OUTER JOIN (SELECT DISTINCT {ad_dimension_with_alias} FROM CHdatabase.adstat
                             WHERE 1 {filt} AND {site_filt} AND {ad_date_filt}) USING {dimension}"""
                 q=q.format(dimension_counts=dimension_counts[dim_num],dimension=dimensionslist[dim_num],date_filt=date_filt,
-                        site_filt=site_filt, filt=filt,ad_date_filt=ad_date_filt,table=table)
+                        site_filt=site_filt,dimension_with_alias=dimensionslist_with_segments_and_aliases[dim_num],
+                           ad_dimension_with_alias=ad_dimensionslist_with_segments_and_aliases[dim_num], filt=filt,ad_date_filt=ad_date_filt,table=table)
                 print(q)
             try:
                 a.update(json.loads(get_clickhouse_data(q+' FORMAT JSON', 'http://46.4.81.36:8123'))['data'][0])
@@ -649,7 +671,7 @@ def CHapi(request):
                     WHERE {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filt}
                    '''.format(date1=date['date1'], date2=date['date2'], ad_metric_counts=ad_metric_counts,site_filt=site_filt,
                               sort_order=sort_order,ad_date_field=ad_date_field)
-
+                print(ad_q_total)
                 ad_q = ''' SELECT {ad_metric_counts}
                                     FROM CHdatabase.adstat
                                     WHERE 1 {filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filt}
@@ -670,10 +692,17 @@ def CHapi(request):
             metric_dict = dict.fromkeys(metrics)
             # Добавляем в словарь даты
             for key in list(metric_dict.keys()):
-                if key in list(total.keys()):
-                    metric_dict[key]={"total_sum": total[key], "sum": total_filtered[key]}
-                else:
-                    metric_dict[key] = {"total_sum":0, "sum":0}
+                sub_metr_dict={}
+                try:
+                    sub_metr_dict['total_sum']=total[key]
+                except:
+                    metric_dict[key] = {"total_sum": 0, "sum": 0}
+                    continue
+                try:
+                    sub_metr_dict['sum'] = total_filtered[key]
+                except:
+                    sub_metr_dict['sum']=0
+                metric_dict[key]=sub_metr_dict
 
             metric_dict.update(abs_date)
             dates.append(metric_dict)
@@ -722,12 +751,12 @@ def CHapi(request):
             st_d['dates'] = dates
             counter+=1
         return st_d
-    def AddStats2(dim,dim_with_alias, metric_counts, filt, limit, period, metrics, table,date_filt):
+    def AddStats2(dim,dim_with_alias,ad_dim_with_alias,metric_counts, filt, limit, period, metrics, table,date_filt):
         """Добавление ключа stats в ответ"""
         stats = []
         #Определяем, есть ли вначале dimensions группа сегментов
         if type(dim[0])==list:
-            stats.append(AddMetricSumsWithFilt(period, metric_counts, filt, metrics, sort_order, table))
+            stats.append(AddMetricSumsWithFilt(relative_period, metric_counts,ad_metric_counts, filt, metrics, sort_order, table))
             seg_label_list={}
             #сортировка по имени сегмента
             for i in dim[0]:
@@ -813,16 +842,16 @@ def CHapi(request):
             if attribution_model=='first_interaction':
                 for date in relative_period:
                     date0=(datetime.strptime(date['date1'], time_format) - timedelta(days=int(attribution_lookup_period))).strftime(time_format)
-                    q = '''SELECT alias as {dimension_without_aliases},{sum_metric_string} FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
+                    q = '''SELECT alias as {dimension},{sum_metric_string} FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
                     WHERE  visitorId IN (SELECT visitorId FROM CHdatabase.hits_with_visits WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
-                    AND {date_field} BETWEEN '{date0}' AND '{date2}' GROUP BY visitorId)
+                    AND {date_field} BETWEEN '{date0}' AND '{date2}' {filt} GROUP BY visitorId)
                     ALL INNER JOIN
                     (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
                     USING visitorId GROUP BY {group_by}'''
                     if is_two_tables:
-                        q = "SELECT {dimension},{metrics} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
+                        q = "SELECT {dimension},{metrics} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
                                                 WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
-                    q = q.format(table=table, dimension_with_alias=dim_with_alias[0], dimension=dim[0],
+                    q = q.format(table=table, dimension_with_alias=dim_with_alias[0],ad_dimension_with_alias=ad_dim_with_alias[0], dimension=dim[0],
                                  sum_metric_string=sum_metric_string,date0=str(date0),
                                  metric_counts=metric_counts, date1=date['date1'], ad_metric_counts=ad_metric_counts,
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,
@@ -833,18 +862,18 @@ def CHapi(request):
 
             elif  attribution_model=='last_non-direct_interaction':
                 for date in relative_period:
-                    q = '''SELECT alias as {dimension_without_aliases},{sum_metric_string}
+                    q = '''SELECT alias as {dimension},{sum_metric_string}
                     FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
                     WHERE  visitorId IN (SELECT visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
-                    AND {date_field} < '{date2}' AND referrerType!='direct' GROUP BY visitorId)
+                    AND {date_field} < '{date2}' AND referrerType!='direct' {filt} GROUP BY visitorId)
                     ALL INNER JOIN
-                    (SELECT {metric_counts},visitorId, {dimension} FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId,{group_by})
+                    (SELECT {metric_counts},visitorId, {dimension_with_alias} FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId,{group_by})
                     USING visitorId
                     GROUP BY {group_by}'''
                     if is_two_tables:
-                        q="SELECT {dimension},{metrics} FROM ("+q+""") ALL FULL OUTER JOIN (SELECT {dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
+                        q="SELECT {dimension},{metrics} FROM ("+q+""") ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
                             WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
-                    q = q.format(table=table, dimension_with_alias=dim_with_alias[0], dimension=dim[0],sum_metric_string=sum_metric_string,
+                    q = q.format(table=table, dimension_with_alias=dim_with_alias[0],ad_dimension_with_alias=ad_dim_with_alias[0], dimension=dim[0],sum_metric_string=sum_metric_string,
                                  metric_counts=metric_counts, date1=date['date1'], ad_metric_counts=ad_metric_counts,
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,dimension_without_aliases=list_with_time_dimensions_without_aliases[0],
                                  date_field=date_field, ad_date_field=ad_date_field, metrics=','.join(metrics))
@@ -857,9 +886,9 @@ def CHapi(request):
                                        GROUP BY {group_by}'''
                     #Если в запросе к апи были запрошены рекламные показатели или поля, которые есть только в таблице adstat, то объединяем таблицы с хитами и визитами с adstat
                     if is_two_tables:
-                        q="SELECT {dimension},{metrics} FROM ("+q+""") ALL FULL OUTER JOIN (SELECT {dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
+                        q="SELECT {dimension},{metrics} FROM ("+q+""") ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase.adstat
                             WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
-                    q=q.format(table=table,dimension_with_alias=dim_with_alias[0],dimension=dim[0], metric_counts=metric_counts,date1=date['date1'],ad_metric_counts=ad_metric_counts,
+                    q=q.format(table=table,dimension_with_alias=dim_with_alias[0],ad_dimension_with_alias=ad_dim_with_alias[0],dimension=dim[0], metric_counts=metric_counts,date1=date['date1'],ad_metric_counts=ad_metric_counts,
                         site_filt=site_filt,date2=date['date2'], filt=filt,group_by=group_by,date_field=date_field,ad_date_field=ad_date_field,metrics=','.join(metrics))
 
                     #Если текущий параметр содержит в себе _path то изменяе строку запроса
@@ -873,7 +902,7 @@ def CHapi(request):
             #если необходимо экспортировать статистику в xlsx
             if export=='xlsx':
                 return ToExcel(array_dates[0])
-            dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],table,date_filt,1,group_by)
+            dates_dicts=datesdicts(array_dates,dim[0],dim_with_alias[0],ad_dim_with_alias[0],table,date_filt,1,group_by)
             #Проверка на выдачу только нулей в показателях. Если тлько нули возвращаем пустой список
             empties=[]
             for i in array_dates:
@@ -936,26 +965,31 @@ def CHapi(request):
             array_dates = []
             updimensions = []
             seg = json.loads(requests.get(
-                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(num)),
+                'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(num)),
                 headers=headers).content.decode('utf-8'))['real_definition']
             seg_filt = seg.partition("==")[0] + "=='" + seg.partition("==")[2] + "'"
             seg_label = json.loads(requests.get(
-                'https://s.analitika.online/api/reference/segments/{num_seg}/'.format(num_seg=int(num)),
+                'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(num)),
                 headers=headers).content.decode('utf-8'))['name']
             counter=0
             for date in relative_period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
-                                                                      WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
-                                                                      FORMAT JSON
-                                                                    '''.format(
-                                                                                   label_val=seg_label,
-                                                                                   segment_val=seg,site_filt=site_filt,
-                                                                                   seg_filt=seg_filt,
-                                                                                   metric_counts=metric_counts,
-                                                                                   date1=date['date1'],
-                                                                                   date2=date['date2'], filt=filt,
-                                                                                   table=table, date_field=date_field)
-                array_dates.append(json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'])
+                                                                                      WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
+                                                                                    '''
+                if is_two_tables:
+                    q = "SELECT label,segment,{metrics} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT '{label_val}' as label,'{segment_val}' as segment,{ad_metric_counts} FROM CHdatabase.adstat
+                                                                                      WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}) USING label LIMIT 1"""
+                q = q.format(label_val=seg_label,
+                             site_filt=site_filt,
+                             segment_val=seg,
+                             seg_filt=FilterParse(seg_filt.replace("'", '')),
+                             metric_counts=metric_counts,
+                             ad_date_field=ad_date_field,
+                             ad_metric_counts=ad_metric_counts,
+                             date1=date['date1'], metrics=','.join(metrics),
+                             date2=date['date2'], filt=filt,
+                             table=table, date_field=date_field)
+                array_dates.append(json.loads(get_clickhouse_data(q +" FORMAT JSON", 'http://46.4.81.36:8123'))['data'])
                 if array_dates[counter] == []:
                     empty_dict = {'label': seg_label,
                                   'segment': seg}
@@ -1103,101 +1137,25 @@ def CHapi(request):
         dimensionslist_with_segments_and_aliases=[]
         time_dimensions_dict={}
         list_with_time_dimensions_without_aliases=[]#список с параметрами,в которых временные параматры, типа year,month и тд будут представлены без алиасов
+        ad_dimensionslist_with_segments_and_aliases = []
+        ad_time_dimensions_dict = {}
+        ad_list_with_time_dimensions_without_aliases = []
         for d in dimensionslist_with_segments:
-            if 'segment' not in d and d!=list:
+            if 'segment' not in d and type(d)!=list:
                 dimensionslist.append(d)
-                if '_path' in d:
-                    time_dimensions_dict[
-                        d] = "replaceAll(replaceAll(replaceAll(toString(groupUniqArray({dimension})),'\\',\\'','->'),'[\\'',''),'\\']','')".format(dimension=d[:-5])
-                    dimensionslist_with_segments_and_aliases.append(
-                        "replaceAll(replaceAll(replaceAll(toString(groupUniqArray({dimension})),'\\',\\'','->'),'[\\'',''),'\\']','') as {d}".format(dimension=d[:-5],d=d))
-                    list_with_time_dimensions_without_aliases.append(
-                        "replaceAll(replaceAll(replaceAll(toString(groupUniqArray({dimension})),'\\',\\'','->'),'[\\'',''),'\\']','')".format(
-                            dimension=d[:-5]))
+                try:
+                    time_dimensions_dict[d]=get_time_dimensions(d).format(lang=lang,date_field='toDate(serverTimestamp)')
+                    dimensionslist_with_segments_and_aliases.append(time_dimensions_dict[d]+' as '+d)
+                    list_with_time_dimensions_without_aliases.append(time_dimensions_dict[d])
+                    ad_time_dimensions_dict[d] = get_time_dimensions(d).format(lang=lang, date_field='StatDate')
+                    ad_dimensionslist_with_segments_and_aliases.append(ad_time_dimensions_dict[d] + ' as ' + d)
+                    ad_list_with_time_dimensions_without_aliases.append(ad_time_dimensions_dict[d])
                     continue
-                if d == 'week_period':
-                    time_dimensions_dict[
-                        d] = "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))"
-                    dimensionslist_with_segments_and_aliases.append(
-                        "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6))) as week_period")
-                    list_with_time_dimensions_without_aliases.append(
-                        "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))")
-                    continue
-                if d == 'week':
-                    time_dimensions_dict[d] = "toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp)))"
-                    dimensionslist_with_segments_and_aliases.append("toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp))) as week")
-                    list_with_time_dimensions_without_aliases.append("toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp)))")
-                    continue
-                if d == 'quarter_period':
-                    time_dimensions_dict[
-                        d] = "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp)))))"
-                    dimensionslist_with_segments_and_aliases.append(
-                        " concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))) as quarter_period")
-                    list_with_time_dimensions_without_aliases.append(
-                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp)))))")
-                    continue
-                if d == 'quarter':
-                    time_dimensions_dict[d] = "toString(toQuarter(toDate(serverTimestamp)))"
-                    dimensionslist_with_segments_and_aliases.append("toString(toQuarter(toDate(serverTimestamp))) as quarter")
-                    list_with_time_dimensions_without_aliases.append("toString(toQuarter(toDate(serverTimestamp)))")
-                    continue
-                if d == 'month':
-                    time_dimensions_dict[d] = "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang)
-                    dimensionslist_with_segments_and_aliases.append("dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp)))) as month".format(lang=lang))
-                    list_with_time_dimensions_without_aliases.append("dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang))
-                    continue
-                if d=='month_period':
-                    time_dimensions_dict[d] = "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp)))))"
-                    dimensionslist_with_segments_and_aliases.append(
-                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp))))) as month_period")
-                    list_with_time_dimensions_without_aliases.append(
-                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp)))))")
-                    continue
-                if d == 'second':
-                    time_dimensions_dict[d]="toSecond(toDateTime(serverTimestamp))"
-                    dimensionslist_with_segments_and_aliases.append("toSecond(toDateTime(serverTimestamp)) as second")
-                    list_with_time_dimensions_without_aliases.append("toSecond(toDateTime(serverTimestamp))")
-                    continue
-                if d == 'minute':
-                    time_dimensions_dict[d]="toMinute(toDateTime(serverTimestamp))"
-                    dimensionslist_with_segments_and_aliases.append("toMinute(toDateTime(serverTimestamp)) as minute")
-                    list_with_time_dimensions_without_aliases.append("toMinute(toDateTime(serverTimestamp))")
-                    continue
-                if d == 'hour':
-                    time_dimensions_dict[d]="toHour(toDateTime(serverTimestamp))"
-                    dimensionslist_with_segments_and_aliases.append("toHour(toDateTime(serverTimestamp)) as hour")
-                    list_with_time_dimensions_without_aliases.append("toHour(toDateTime(serverTimestamp))")
-                    continue
-                if d == 'year':
-                    time_dimensions_dict[d]="toYear(toDate(serverTimestamp))"
-                    dimensionslist_with_segments_and_aliases.append("toYear(toDate(serverTimestamp)) as year")
-                    list_with_time_dimensions_without_aliases.append("toYear(toDate(serverTimestamp))")
-                    continue
-                if d == 'day_of_week_code':
-                    time_dimensions_dict[d]="toDayOfWeek(toDate(serverTimestamp))"
-                    dimensionslist_with_segments_and_aliases.append("toDayOfWeek(toDate(serverTimestamp)) as day_of_week_code")
-                    list_with_time_dimensions_without_aliases.append("toDayOfWeek(toDate(serverTimestamp))")
-                    continue
-                if d=='date':
-                    time_dimensions_dict[d] = "toDate(serverTimestamp)"
-                    dimensionslist_with_segments_and_aliases.append(
-                        "toDate(serverTimestamp) as date")
-                    list_with_time_dimensions_without_aliases.append(
-                        "toDate(serverTimestamp)")
-                    continue
-                if d == 'day_of_week':
-                    time_dimensions_dict[
-                        d] = "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
-                        lang=lang)
-                    dimensionslist_with_segments_and_aliases.append(
-                        "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp)))) as day_of_week".format(
-                            lang=lang))
-                    list_with_time_dimensions_without_aliases.append(
-                        "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
-                            lang=lang))
-                    continue
-                list_with_time_dimensions_without_aliases.append(d)
+                except:
+                    list_with_time_dimensions_without_aliases.append(d)
+                    ad_list_with_time_dimensions_without_aliases.append(d)
             dimensionslist_with_segments_and_aliases.append(d)
+            ad_dimensionslist_with_segments_and_aliases.append(d)
 
         metrics = json.loads(request.body.decode('utf-8'))['metrics']
         # сортировка по переданному показателю
@@ -1249,12 +1207,11 @@ def CHapi(request):
                     filter = filter.split(';')
                     filter_label = []
                     for sub_filt in filter:
-                        filter_label.append(re.split(r'\W{1,2}', sub_filt)[1].capitalize())
+                        filter_label.append(re.split(r'={1,2}', sub_filt)[1].capitalize())
                     resp['filter_label'] = filter_label
             else:
                 filt="AND 1"
 
-        having = 'HAVING 1'
         try:
             search_pattern=json.loads(request.body.decode('utf-8'))['search_pattern']
         except:
@@ -1321,19 +1278,18 @@ def CHapi(request):
         except:
             relative_period=period
             date_field = 'serverDate'
-
         table = 'CHdatabase.hits_with_visits'
-        list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
-                       'AdPosition', 'AdPositionType', 'AdRegionId', 'AdRetargetindId', 'AdPlacement', 'AdTargetId', 'AdvertisingSystem', 'DRF', 'campaignContent',
-                       'campaignKeyword', 'campaignMedium', 'campaignName', 'campaignSource']
 
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
+        ad_dimension_counts = []
         for i in dimensionslist:
             if i in time_dimensions_dict.keys():
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension_alias}".format(dimension=time_dimensions_dict[i],dimension_alias=i))
+                ad_dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension_alias}".format(dimension=ad_time_dimensions_dict[i],dimension_alias=i))
             else:
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
+                ad_dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
         is_two_tables=False
 
         # Фильтр по всем датам
@@ -1370,6 +1326,9 @@ def CHapi(request):
         if is_all_segments==True and metric_counts_list!=[] and ad_metric_counts_list!=[]:
             is_two_tables = True
         if metric_counts_list==[]:
+            dimension_counts=ad_dimension_counts
+            dimensionslist_with_segments_and_aliases=ad_dimensionslist_with_segments_and_aliases
+            list_with_time_dimensions_without_aliases=ad_list_with_time_dimensions_without_aliases
             table='CHdatabase.adstat'
             metric_counts=','.join(ad_metric_counts_list)
             date_field=ad_date_field
@@ -1386,15 +1345,16 @@ def CHapi(request):
             next=json.loads(requests.get(next, headers=headers).content.decode('utf-8'))['next']"""
 
         #Добавляем в выходной словарь параметр counts
-
         resp['counts'] = {}
-        if dimensionslist!=[]:
-            resp['counts']=AddCounts(period,dimension_counts,filt,sort_order,table,date_filt)
+        try:
+            resp['counts'] = AddCounts(period, dimension_counts,ad_dimension_counts, filt, sort_order, table, date_filt)
+        except:
+            pass
         # Добавляем в выходной словарь параметр metric_sums
 
         resp['metric_sums']={}
         total,total_filtered,resp['metric_sums']['dates'] = AddMetricSums(period,metric_counts_list,filt,metrics,sort_order,table)
-        stats=AddStats2(dimensionslist_with_segments,dimensionslist_with_segments_and_aliases,metric_counts,filt,limit,period,metrics,table,date_filt)
+        stats=AddStats2(dimensionslist_with_segments,dimensionslist_with_segments_and_aliases,ad_dimensionslist_with_segments_and_aliases,metric_counts,filt,limit,period,metrics,table,date_filt)
         # Добавляем stats
         resp['stats']=stats
         pprint.pprint(resp)
@@ -1561,7 +1521,6 @@ def segment_stat(request):
 
 @csrf_exempt
 def diagram_stat(request):
-
     def get_clickhouse_data(query,host,connection_timeout=1500):
         """Метод для обращения к базе данных CH"""
         r=requests.post(host,params={'query':query},timeout=connection_timeout)
@@ -1576,16 +1535,18 @@ def diagram_stat(request):
                                     WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                    '''
             if is_two_tables:
-                q="""SELECT {dimension_counts} FROM (SELECT DISTINCT {dimension} FROM CHdatabase.hits_with_visits
-                                WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}') ALL FULL OUTER JOIN (SELECT DISTINCT {dimension} FROM CHdatabase.adstat
+                q="""SELECT CAST(uniq({dimension}),'Int') as h{dimension} FROM (SELECT DISTINCT {dimensions_with_alias} FROM CHdatabase.hits_with_visits
+                                WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}') ALL FULL OUTER JOIN (SELECT DISTINCT {ad_dimensions_with_alias} FROM CHdatabase.adstat
                                 WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}') USING {dimension}"""
             q=q.format(dimension_counts=dimension_counts[dim_num],dimension=dimensionslist[dim_num],date_field=date_field,
+                       ad_dimensions_with_alias=ad_dimensionslist_with_aliases[dim_num],dimensions_with_alias=dimensionslist_with_aliases[dim_num],
                             site_filt=site_filt, filt=filt,ad_date_field=ad_date_field,table=table,date1=date1,date2=date2)
+            print(q)
 
-        try:
-            a.update(json.loads(get_clickhouse_data(q+' FORMAT JSON', 'http://46.4.81.36:8123'))['data'][0])
-        except:
-            a.update({'h'+dimensionslist[dim_num]:0})
+            try:
+                a.update(json.loads(get_clickhouse_data(q+' FORMAT JSON', 'http://46.4.81.36:8123'))['data'][0])
+            except:
+                a.update({'h'+dimensionslist[dim_num]:0})
 
         b = {}
         try:
@@ -1694,7 +1655,7 @@ def diagram_stat(request):
         metric_dict.update({'date1':date1,'date2':date2})
         dates.append(metric_dict)
         return dates
-    def AddStats2(dimensionslist,dim_with_aliases, metric_counts, filt, limit, having, date1,date2, metrics, table):
+    def AddStats2(dimensionslist,dim_with_aliases, ad_dim_with_aliases,metric_counts, filt, limit, having, date1,date2, metrics, table):
         """Добавление ключа stats в ответ"""
         #Определяем, есть ли вначале dimensions группа сегментов
         q = '''SELECT {dimensions_with_alias},({metric_counts}) as metrics FROM {table}
@@ -1702,10 +1663,10 @@ def diagram_stat(request):
                                                GROUP BY {dimensions}'''
         # Если в запросе к апи были запрошены рекламные показатели или поля, которые есть только в таблице adstat, то объединяем таблицы с хитами и визитами с adstat
         if is_two_tables:
-            q = "SELECT {dimensions},(metrics,ad_metrics) as metrics FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {dimensions_with_alias},({ad_metric_counts}) as ad_metrics FROM CHdatabase.adstat
+            q = "SELECT {dimensions},(metrics,ad_metrics) as metrics FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimensions_with_alias},({ad_metric_counts}) as ad_metrics FROM CHdatabase.adstat
                                     WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimensions}) USING {dimensions}"""
         q = q.format(table=table, dimensions_with_alias=','.join(dim_with_aliases), dimensions=','.join(dimensionslist), metric_counts=metric_counts,
-                     date1=date1, ad_metric_counts=ad_metric_counts,
+                     date1=date1, ad_metric_counts=ad_metric_counts,ad_dimensions_with_alias=','.join(ad_dim_with_aliases),
                      site_filt=site_filt, date2=date2, filt=filt, date_field=date_field,
                      ad_date_field=ad_date_field, metrics=','.join(metrics))
         print(q+" ORDER BY {sort_column} {sort_order} {limit} FORMAT JSON".format(limit=limit,sort_column=sort_column,sort_order=sort_order))
@@ -1716,8 +1677,6 @@ def diagram_stat(request):
                 metr = {}
                 for metric_num in range(len(stat['metrics'])):
                     metr[metrics[metric_num]]=stat['metrics'][metric_num]
-
-
                 stat['metrics']=metr
                 if dimensionslist!=dimensionslist_with_segments:
                     stat['segment']='Все данные'
@@ -1733,14 +1692,14 @@ def diagram_stat(request):
                 seg_label = json.loads(requests.get(
                     'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dim[7:])),
                     headers=headers).content.decode('utf-8'))['name']
-                q = '''SELECT {dimensions},[{metric_counts}] as metrics FROM {table}
+                q = '''SELECT {dimensions_with_alias},[{metric_counts}] as metrics FROM {table}
                                                                WHERE 1 {filt} AND {site_filt} AND ({date_field} BETWEEN '{date1}' AND '{date2}') AND ({seg_filt})
                                                                GROUP BY {dimensions}'''
                 # Если в запросе к апи были запрошены рекламные показатели или поля, которые есть только в таблице adstat, то объединяем таблицы с хитами и визитами с adstat
                 if is_two_tables:
-                    q = "SELECT {dimensions},arrayConcat(metrics,ad_metrics) as metrics FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {dimensions},[{ad_metric_counts}] as ad_metrics FROM CHdatabase.adstat
+                    q = "SELECT {dimensions},arrayConcat(metrics,ad_metrics) as metrics FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimensions_with_alias},[{ad_metric_counts}] as ad_metrics FROM CHdatabase.adstat
                                                     WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND ({seg_filt}) GROUP BY {dimensions}) USING {dimensions}"""
-                q = q.format(table=table,
+                q = q.format(table=table,dimensions_with_alias=','.join(dim_with_aliases),ad_dimensions_with_alias=','.join(ad_dim_with_aliases),
                              dimensions=','.join(dimensionslist), metric_counts=metric_counts,
                              date1=date1, ad_metric_counts=ad_metric_counts,seg_filt=FilterParse(seg_filt.replace("'",'')),
                              site_filt=site_filt, date2=date2, filt=filt, date_field=date_field,
@@ -1754,7 +1713,6 @@ def diagram_stat(request):
                     stat['metrics'] = metr
                     stat['segment']=seg_label
                     stats.append(stat)
-
 
         if dimensionslist!=dimensionslist_with_segments:
             for stat_num in range(len(stats)-1,-1,-1):
@@ -1900,78 +1858,25 @@ def diagram_stat(request):
             lang = "ru"
         dimensionslist = []
         dimensionslist_with_aliases=[]
+        ad_dimensionslist_with_aliases=[]#ля рекламных параметров
         #Создание списка параметров без сегментов
         time_dimensions_dict = {}
+        ad_time_dimensions_dict = {}#для рекламных параметров
+        #Проверка на сложные параметры(временнЫе)
         for d in dimensionslist_with_segments:
-            if 'segment' not in d and d != list:
+            if 'segment' not in d and type(d) != list:
                 dimensionslist.append(d)
-                if d == 'month':
-                    time_dimensions_dict[d] = "dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp))))".format(lang=lang)
-                    dimensionslist_with_aliases.append("dictGetString('month','{lang}',toUInt64(toMonth(toDate(serverTimestamp)))) as month".format(lang=lang))
+                try:
+                    time_dimensions_dict[d]=get_time_dimensions(d).format(lang=lang,date_field='toDate(serverTimestamp)')
+                    dimensionslist_with_aliases.append(time_dimensions_dict[d]+' as '+d)
+                    ad_time_dimensions_dict[d] = get_time_dimensions(d).format(lang=lang, date_field='StatDate')
+                    ad_dimensionslist_with_aliases.append(ad_time_dimensions_dict[d] + ' as ' + d)
                     continue
-                if d == 'month_period':
-                    time_dimensions_dict[d] = "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp)))))"
-                    dimensionslist_with_aliases.append(
-                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toMonth(toDate(serverTimestamp))))) as month_period")
-                    continue
-                if d == 'quarter':
-                    time_dimensions_dict[d] = "toQuarter(toDate(serverTimestamp))"
-                    dimensionslist_with_aliases.append("toQuarter(toDate(serverTimestamp)) as quarter")
-                    continue
-                if d == 'quarter_period':
-                    time_dimensions_dict[
-                        d] = "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp)))))"
-                    dimensionslist_with_aliases.append(
-                        "concat(toString(toYear(toDate(serverTimestamp))),concat('-',toString(toQuarter(toDate(serverTimestamp))))) as quarter_period")
-                    continue
-                if d == 'week':
-                    time_dimensions_dict[
-                        d] = "toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp)))"
-                    dimensionslist_with_aliases.append(
-                        "toRelativeWeekNum(toDate(serverTimestamp)) - toRelativeWeekNum(toStartOfYear(toDate(serverTimestamp))) as week")
-                    continue
-                if d == 'week_period':
-                    time_dimensions_dict[
-                        d] = "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6)))"
-                    dimensionslist_with_aliases.append(
-                        "concat(toString(toMonday(toDate(serverTimestamp))),concat(' ',toString(toMonday(toDate(serverTimestamp)) +6))) as week_period")
-                    continue
-                if d == 'second':
-                    time_dimensions_dict[d] = "toSecond(toDateTime(serverTimestamp))"
-                    dimensionslist_with_aliases.append("toSecond(toDateTime(serverTimestamp)) as second")
-                    continue
-                if d == 'minute':
-                    time_dimensions_dict[d] = "toMinute(toDateTime(serverTimestamp))"
-                    dimensionslist_with_aliases.append("toMinute(toDateTime(serverTimestamp)) as minute")
-                    continue
-                if d == 'hour':
-                    time_dimensions_dict[d] = "toHour(toDateTime(serverTimestamp))"
-                    dimensionslist_with_aliases.append("toHour(toDateTime(serverTimestamp)) as hour")
-                    continue
-                if d == 'year':
-                    time_dimensions_dict[d] = "toYear(toDate(serverTimestamp))"
-                    dimensionslist_with_aliases.append("toYear(toDate(serverTimestamp)) as year")
-                    continue
-                if d == 'day_of_week_code':
-                    time_dimensions_dict[d] = "toDayOfWeek(toDate(serverTimestamp))"
-                    dimensionslist_with_aliases.append(
-                        "toDayOfWeek(toDate(serverTimestamp)) as day_of_week_code")
-                    continue
-                if d == 'date':
-                    time_dimensions_dict[d] = "toDate(serverTimestamp)"
-                    dimensionslist_with_aliases.append(
-                        "toDate(serverTimestamp) as date")
-                    continue
-                if d == 'day_of_week':
-                    time_dimensions_dict[
-                        d] = "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp))))".format(
-                        lang=lang)
-                    dimensionslist_with_aliases.append(
-                        "dictGetString('week','{lang}',toUInt64(toDayOfWeek(toDate(serverTimestamp)))) as day_of_week".format(
-                            lang=lang))
-                    continue
-                dimensionslist_with_aliases.append(d)
-
+                except:
+                    dimensionslist_with_aliases.append(d)
+                    ad_dimensionslist_with_aliases.append(d)
+        print(dimensionslist_with_aliases)
+        print(dimensionslist)
         metrics = json.loads(request.body.decode('utf-8'))['metrics']
         #если в запросе не указан сдвиг, зададим его равным нулю
         try:
@@ -1999,9 +1904,10 @@ def diagram_stat(request):
                 if show_filter_label in ['True', 'true', 'TRUE', True]:
                     filter = filter.replace(',', ';')
                     filter = filter.split(';')
+                    print(filter)
                     filter_label = []
                     for sub_filt in filter:
-                        filter_label.append(re.split(r'\W{1,2}', sub_filt)[1].capitalize())
+                        filter_label.append(re.split(r'={1,2}', sub_filt)[1].capitalize())
                     resp['filter_label'] = filter_label[len(filter_label)-1]
                     if len(filter_label)>1:
                         resp['filter_parent_label'] = filter_label[len(filter_label) - 2]
@@ -2078,11 +1984,14 @@ def diagram_stat(request):
 
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
+        ad_dimension_counts=[]
         for i in dimensionslist:
             if i in time_dimensions_dict.keys():
+                ad_dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension_alias}".format(dimension=ad_time_dimensions_dict[i],dimension_alias=i))
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension_alias}".format(dimension=time_dimensions_dict[i],dimension_alias=i))
             else:
                 dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
+                ad_dimension_counts.append("CAST(uniq({dimension}),'Int') as h{dimension}".format(dimension=i))
 
 
         # ФОрмируем массив с запросом каждого показателя в SQL
@@ -2108,9 +2017,12 @@ def diagram_stat(request):
         if is_all_segments == True and metric_counts_list != [] and ad_metric_counts_list != []:
             is_two_tables = True
         if metric_counts_list == []:
+            dimensionslist_with_aliases=ad_dimensionslist_with_aliases
+            dimension_counts=ad_dimension_counts
             table = 'CHdatabase.adstat'
             metric_counts = ','.join(ad_metric_counts_list)
             date_field = ad_date_field
+
         #Добавляем в выходной словарь параметр counts
 
         resp['counts'] = {}
@@ -2119,7 +2031,7 @@ def diagram_stat(request):
         # Добавляем в выходной словарь параметр metric_sums
         resp['metric_sums']={}
         resp['metric_sums']['dates'] = AddMetricSums(relative_date1,relative_date2,metric_counts_list,filt,metrics,sort_order,table)
-        stats=AddStats2(dimensionslist,dimensionslist_with_aliases,metric_counts,filt,limit,having,relative_date1,relative_date2,metrics,table)
+        stats=AddStats2(dimensionslist,dimensionslist_with_aliases,ad_dimensionslist_with_aliases,metric_counts,filt,limit,having,relative_date1,relative_date2,metrics,table)
         # Добавляем stats
         resp['stats']=stats
         pprint.pprint(resp)
