@@ -287,9 +287,11 @@ def CHapi(request):
         """Рекурсивный метод для добавления вложенных структур в stats"""
         #Добавляем фильтры
         try:
+            print(updimensions)
             updimensions.pop(n)
         except:
             pass
+
         #Добавляем параметры в список с параметрами верхних уровней
         #Если предыдущий уровень-сегмент, не добавляем фильтр
         try:
@@ -322,7 +324,6 @@ def CHapi(request):
             sub.append(up_dim_info)
         for num in range(num_seg):
             array_dates = []
-            updimensions = []
             seg = json.loads(requests.get(
                 'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dimensionslist_with_segments[n+1][num][7:])),
                 headers=headers).content.decode('utf-8'))['real_definition']
@@ -330,8 +331,7 @@ def CHapi(request):
             seg_label = json.loads(requests.get(
                 'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dimensionslist_with_segments[n+1][num][7:])),
                 headers=headers).content.decode('utf-8'))['name']
-            updimensions.append(seg_filt)
-            updimensions.append(seg_filt)
+
             updm = ' AND '.join(updimensions)
             counter=0
             for date in relative_period:
@@ -363,6 +363,7 @@ def CHapi(request):
                 counter+=1
             counter=0
             for i in array_dates[0]:
+                updimensions = updimensions[:n + 1]
                 stat_dict = {'label': i['label'],
                              'segment': i['segment']}
                 dates = []
@@ -378,13 +379,14 @@ def CHapi(request):
                 stat_dict['dates'] = dates
                 if len(dimensionslist_with_segments) > n+2:
                     # Добавляем подуровень
+                    updimensions.append(seg_filt)
+                    updimensions.append(seg_filt)
                     stat_dict['sub'] = RecStats(n+1, i, updimensions, table,1)
                 sub.append(stat_dict)
                 counter+=1
         # Если dimension является сегментом(не группой сегментов а отдельным сегментом):
         if 'segment' in dimensionslist_with_segments[n+1]:
             array_dates = []
-            updimensions = []
             seg = json.loads(requests.get(
                 'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dimensionslist_with_segments[n+1][7:])),
                 headers=headers).content.decode('utf-8'))['real_definition']
@@ -392,8 +394,7 @@ def CHapi(request):
             seg_label = json.loads(requests.get(
                 'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dimensionslist_with_segments[n+1][7:])),
                 headers=headers).content.decode('utf-8'))['name']
-            updimensions.append(FilterParse(seg_filt.replace("'", '')))
-            updimensions.append(FilterParse(seg_filt.replace("'", '')))
+
             updm = ' AND '.join(updimensions)
             for date in relative_period:
                 q = '''SELECT '{label_val}' as label,'{segment_val}' as segment,{metric_counts} FROM {table}
@@ -422,6 +423,7 @@ def CHapi(request):
                     array_dates[0].append(empty_dict)
             counter=0
             for i in array_dates[0]:
+                updimensions = updimensions[:n + 1]
                 stat_dict = {'label': i['label'],
                              'segment': i['segment'], }
                 dates = []
@@ -437,6 +439,8 @@ def CHapi(request):
                 # если размер dimensions больше 1, заполняем подуровень
                 if len(dimensionslist_with_segments) > n+2:
                     # Добавляем подуровень
+                    updimensions.append(FilterParse(seg_filt.replace("'", '')))
+                    updimensions.append(FilterParse(seg_filt.replace("'", '')))
                     up_dim = stat_dict.copy()
                     stat_dict['sub'] = RecStats(n+1, i, updimensions, table, up_dim)
                 sub.append(stat_dict)
@@ -471,8 +475,7 @@ def CHapi(request):
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,
                                  dimension_without_aliases=list_with_time_dimensions_without_aliases[n+1],
                                  date_field=date_field, ad_date_field=ad_date_field, metrics=','.join(metrics))
-                    print(q + ' ORDER BY {sort_column} {sort_order} {limit} FORMAT JSON'.format(
-                            sort_column=sort_column_in_query, sort_order=sort_order, limit=limit))
+
                     array_dates.append(json.loads(get_clickhouse_data(q + ' ORDER BY {sort_column} {sort_order} {limit} FORMAT JSON'.format(
                             sort_column=sort_column_in_query, sort_order=sort_order, limit=limit),'http://46.4.81.36:8123'))['data'])
             elif attribution_model == 'last_non-direct_interaction':
@@ -494,8 +497,7 @@ def CHapi(request):
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,
                                  dimension_without_aliases=list_with_time_dimensions_without_aliases[n + 1],
                                  date_field=date_field, ad_date_field=ad_date_field, metrics=','.join(metrics))
-                    print(q + ' ORDER BY {sort_column} {sort_order} {limit} FORMAT JSON'.format(
-                        sort_column=sort_column_in_query, sort_order=sort_order, limit=limit))
+
                     array_dates.append(json.loads(
                         get_clickhouse_data(q + ' ORDER BY {sort_column} {sort_order} {limit} FORMAT JSON'.format(
                             sort_column=sort_column_in_query, sort_order=sort_order, limit=limit),
@@ -513,7 +515,7 @@ def CHapi(request):
                                  metric_counts=metric_counts, date1=date['date1'], ad_metric_counts=ad_metric_counts,updimensions=updm,
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,ad_dimension_with_alias=ad_dimensionslist_with_segments_and_aliases[n+1],
                                  date_field=date_field, ad_date_field=ad_date_field, metrics=','.join(metrics))
-                    print(q)
+
                     array_dates.append(json.loads(get_clickhouse_data(q+' ORDER BY {sort_column} {sort_order} FORMAT JSON'
                                                                       .format(sort_column=sort_column_in_query,sort_order=sort_order), 'http://46.4.81.36:8123'))['data'])
             dates_dicts=datesdicts(array_dates,dimensionslist_with_segments[n+1],dimensionslist_with_segments_and_aliases[n+1],ad_dimensionslist_with_segments_and_aliases[n+1],table,date_filt,updm,group_by)
@@ -531,6 +533,7 @@ def CHapi(request):
                 return sub
 
             for i2 in array_dates[MaxLenNum(array_dates)][:lim]:
+                updimensions=updimensions[:n+1]
                 stat_dict = {'label': i2[dimensionslist_with_segments[n + 1]],
                              'segment':'{label}=={value}'.format(label=dimensionslist_with_segments[n + 1]
                                                                  ,value=i2[dimensionslist_with_segments[n + 1]])}
@@ -549,6 +552,23 @@ def CHapi(request):
                     continue
                 stat_dict['dates'] = dates
                 if n != len(dimensionslist_with_segments) - 2:
+                    if '_path' in dimensionslist_with_segments[n+1]:
+                        updimensions.append('visitorId IN {list_of_id}'.format(list_of_id=i2['visitorId']))
+                    else:
+                        try:
+                            if dimensionslist_with_segments[n+1] in time_dimensions_dict.keys():
+                                if type(i2[dimensionslist_with_segments[n+1]]) is int:
+                                    updimensions.append("{updimension}={updimension_val}".format(updimension=time_dimensions_dict[dimensionslist_with_segments[n+1]],updimension_val=i2[dimensionslist_with_segments[n+1]]))
+                                else:
+                                    updimensions.append(
+                                        "{updimension}='{updimension_val}'".format(updimension=time_dimensions_dict[dimensionslist_with_segments[n+1]],
+                                                                                 updimension_val=i2[dimensionslist_with_segments[n+1]]))
+                            else:
+                                updimensions.append("{updimension}='{updimension_val}'".format(updimension_val=i2[dimensionslist_with_segments[n+1]],
+                                                                                           updimension=dimensionslist_with_segments[n+1]))
+                        except:
+                            pass
+
                     up_dim=stat_dict.copy()#Передаем словарь с информацией о вернем уровне "Все файлы"
                     stat_dict['sub'] = RecStats(n + 1, i2, updimensions, table,up_dim)
                 sub.append(stat_dict)
@@ -727,9 +747,13 @@ def CHapi(request):
                 ad_ar_d.append(json.loads(get_clickhouse_data(ad_t+ ' FORMAT JSON', 'http://46.4.81.36:8123'))['data'])
             ar_d.append(json.loads(get_clickhouse_data(t+ ' FORMAT JSON', 'http://46.4.81.36:8123'))['data'])
         #Объкдиняем данные для разных таблиц, если выбор происходит из нескольких таблиц
+
         if is_two_tables:
             for (sub,ad_sub) in zip(ar_d,ad_ar_d):
-                sub[0].update(ad_sub[0])
+                try:
+                    sub[0].update(ad_sub[0])
+                except:
+                    pass
 
         counter=0
         for i in ar_d[0]:
@@ -773,7 +797,6 @@ def CHapi(request):
         if 'segment' in dim[0]:
             stats.append(AddMetricSumsWithFilt(relative_period, metric_counts,ad_metric_counts, filt, metrics, sort_order, table))
             array_dates = []
-            updimensions = []
             seg=json.loads(requests.get('https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(dim[0][7:])),
                                 headers=headers).content.decode('utf-8'))['real_definition']
             seg_filt=seg.partition("==")[0]+"=='"+seg.partition("==")[2]+"'"
@@ -802,6 +825,7 @@ def CHapi(request):
 
             counter=0
             for i in array_dates[0]:
+                updimensions = []
                 if search_pattern.lower() not in str(i['label']).lower():
                     continue
 
@@ -828,7 +852,6 @@ def CHapi(request):
                 stats.append(stat_dict)
                 counter+=1
         elif seg_label_list==[]:
-            updimensions = []
             array_dates = []
             if sort_column=="":
                 sort_column_in_query=dim[0]
@@ -916,7 +939,7 @@ def CHapi(request):
                 return stats
                 #определим самый большой список в array_dates
             for i in array_dates[MaxLenNum(array_dates)][:lim]:
-
+                updimensions = []
                 if search_pattern.lower() not in str(i[dim[0]]).lower():
                     continue
                 stat_dict = {'label': i[dim[0]],
@@ -957,13 +980,14 @@ def CHapi(request):
                                                                                            updimension=dim[0]))
                         except:
                             pass
+
                     up_dim=stat_dict.copy()#Передаем словарь с информацией о вернем уровне "Все файлы"
                     stat_dict['sub'] = RecStats(0, i, updimensions, table,up_dim)
                 stats.append(stat_dict)
         #Для групп сегментов
         for num in seg_label_list:
             array_dates = []
-            updimensions = []
+
             seg = json.loads(requests.get(
                 'https://s.analitika.online/api/reference/segments/{num_seg}/?all=1'.format(num_seg=int(num)),
                 headers=headers).content.decode('utf-8'))['real_definition']
@@ -999,6 +1023,7 @@ def CHapi(request):
                 counter+=1
             counter = 0
             for i in array_dates[0]:
+                updimensions = []
                 if search_pattern.lower() not in str(i['label']).lower():
                     continue
                 stat_dict = {'label': i['label'],
