@@ -20,7 +20,7 @@ from pandas import ExcelFile
 import copy
 from datetime import datetime, timedelta
 import pytz
-stas_api='https://dev-api.smartanalytics.io/api/'
+from Word2Vec.settings import stas_api,DB
 def get_all_dimensions():
     #Дописать
     all_dimensions=['visitorId','idVisit','deviceModel','serverDate','referrerTypeName',
@@ -61,7 +61,6 @@ def negative_condition(condition):
         return negatives[condition]
 
     return condition
-
 def get_query_for_metric_name(metric):
     metrics_query_dict={'conversion_rate':"if(uniq(idVisit)=0,0,floor(countIf(Type='goal')*100/uniq(idVisit),2)) as conversion_rate",
                         'nb_new_visitors_per_all_visitors':"if(uniq(visitorId)=0,0,floor(uniqIf(visitorId,visitorType='new')*100/uniq(visitorId),2)) as nb_new_visitors_per_all_visitors",
@@ -121,6 +120,11 @@ def MetricCounts(metrics, headers,dimensionslist,is_all_segments,attribution_mod
             metric_counts.append(get_query_for_metric_name(i))
         except:
             pass
+        if 'all_conversion_cost' in i:
+            metrics_string = metrics_string.replace('all_conversion_cost',"if(nb_conversions==0,0,floor(cost/nb_conversions,2)) as all_conversion_cost")
+            ad_metric_counts.append("CAST(sum(Cost),'Int') as cost")
+            metric_counts.append("CAST(sum(Type='goal'),'Int') as nb_conversions")
+            continue
         if 'calculated_metric' in i:
             calc_metr = json.loads(requests.get(
                 stas_api+'reference/calculated_metrics/{num}/?all=1'.format(
@@ -156,10 +160,14 @@ def MetricCounts(metrics, headers,dimensionslist,is_all_segments,attribution_mod
                 try:
                  #Добавляем группы целей
                     query=[] # список с (sum(Type='goal' and goalId={N}) для всех целей, что есть в goals в апи
+                    print(json.loads(requests.get(
+                        stas_api+'reference/goal_groups/{id}?all=1'.format(id=re.findall(r'\d{1,3}',i)[0]),
+                            headers=headers).content.decode('utf-8'))['goals_code'])
                     for goal in json.loads(requests.get(
                         stas_api+'reference/goal_groups/{id}?all=1'.format(id=re.findall(r'\d{1,3}',i)[0]),
                             headers=headers).content.decode('utf-8'))['goals_code']:
-                        query.append("CAST(sum(Type='goal' AND goalId={N}),'Int')".format(N=goal[4:]))
+                        if goal:
+                            query.append("CAST(sum(Type='goal' AND goalId={N}),'Int')".format(N=goal[4:]))
                     query='+'.join(query) #строка запроса с суммой goalN
                     #если в показателе есть _conversion, то вычисляем относительный показатель(делим на колчество визитов)
                     if '_conversion' in i:
@@ -172,6 +180,7 @@ def MetricCounts(metrics, headers,dimensionslist,is_all_segments,attribution_mod
                             N=re.findall(r'\d{1,3}', i)[0]))
                         continue
                     else:
+                        print(query)
                         metric_counts.append(query + ' as goalgroup{N}'.format(N=i[9:]))
                         continue
                 except:
@@ -266,10 +275,10 @@ def CHapi(request):
                                            GROUP BY {group_by}
                                            '''
         if is_two_tables:
-            q_all="SELECT {dimension} FROM ("+q_all+""") ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias} FROM CHdatabase_test.adstat
+            q_all="SELECT {dimension} FROM ("+q_all+""") ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias} FROM {DB}.adstat
                             WHERE 1 {filt} AND {site_filt} AND {ad_date_filt} AND {updm} GROUP BY {group_by}) USING {dimension}"""
         q_all=q_all.format(dimension_with_alias=dim_with_alias,ad_dimension_with_alias=ad_dim_with_alias,dimension=dim,updm=updm,date_filt=date_filt,
-                        site_filt=site_filt, filt=filt,group_by=group_by,ad_date_filt=ad_date_filt,table=table)
+                        site_filt=site_filt, filt=filt,group_by=group_by,ad_date_filt=ad_date_filt,table=table,DB=DB)
 
         all_labeldicts = json.loads(get_clickhouse_data(q_all+' {limit} FORMAT JSON'.format(limit=limit), 'http://46.4.81.36:8123'))['data']
         all_label = []
@@ -355,7 +364,7 @@ def CHapi(request):
                                        WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt} AND {updm}
                                                                                                     '''
                 if is_two_tables:
-                    q = "SELECT label,segment,{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT '{label_val}' as label,'{segment_val}' as segment,{ad_metric_counts} FROM CHdatabase_test.adstat
+                    q = "SELECT label,segment,{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT '{label_val}' as label,'{segment_val}' as segment,{ad_metric_counts} FROM {DB}.adstat
                                       WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt} AND {updm}) USING label LIMIT 1"""
                 q = q.format(label_val=seg_label,
                              site_filt=site_filt,
@@ -366,7 +375,7 @@ def CHapi(request):
                              ad_metric_counts=ad_metric_counts,
                              date1=date['date1'], metrics_string=metrics_string,
                              date2=date['date2'], filt=filt,
-                             table=table, date_field=date_field)
+                             table=table, date_field=date_field,DB=DB)
 
                 array_dates.append(json.loads(get_clickhouse_data(q+' FORMAT JSON', 'http://46.4.81.36:8123'))['data'])
                 # Если сегмент пуст, добавляем нулевые значение в dates
@@ -417,7 +426,7 @@ def CHapi(request):
                        WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt} AND {updm}
                                                                                     '''
                 if is_two_tables:
-                    q = "SELECT label,segment,{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT '{label_val}' as label,'{segment_val}' as segment,{ad_metric_counts} FROM CHdatabase_test.adstat
+                    q = "SELECT label,segment,{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT '{label_val}' as label,'{segment_val}' as segment,{ad_metric_counts} FROM {DB}.adstat
                       WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt} AND {updm}) USING label LIMIT 1"""
                 q = q.format(label_val=seg_label,
                              site_filt=site_filt,
@@ -428,7 +437,7 @@ def CHapi(request):
                              ad_metric_counts=ad_metric_counts,
                              date1=date['date1'], metrics_string=metrics_string,
                              date2=date['date2'], filt=filt,
-                             table=table, date_field=date_field)
+                             table=table, date_field=date_field,DB=DB)
                 print(q)
                 array_dates.append(json.loads(get_clickhouse_data(q+" FORMAT JSON", 'http://46.4.81.36:8123'))['data'])
                 if array_dates[0]==[]:
@@ -477,20 +486,20 @@ def CHapi(request):
                 for date in relative_period:
                     date0 = (datetime.strptime(date['date1'], time_format) - timedelta(days=int(attribution_lookup_period))).strftime(time_format)
                     q = '''SELECT alias as {dimension_without_aliases},{sum_metric_string} FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
-                                        WHERE  visitorId IN (SELECT visitorId FROM CHdatabase_test.hits_with_visits WHERE 1 {filt} AND {site_filt} AND {updimensions} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                                        WHERE  visitorId IN (SELECT visitorId FROM {DB}.hits_with_visits WHERE 1 {filt} AND {site_filt} AND {updimensions} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                                         AND {date_field} BETWEEN '{date0}' AND '{date2}' {filt} AND {updimensions} GROUP BY visitorId)
                                         ALL INNER JOIN
                                         (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {updimensions} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
                                         USING visitorId GROUP BY {group_by}'''
                     if is_two_tables:
-                        q = "SELECT {dimension},{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase_test.adstat
+                        q = "SELECT {dimension},{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM {DB}.adstat
                                                                     WHERE 1 {filt} AND {site_filt} AND {updimensions} AND {ad_date_field}  BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
                     q = q.format(table=table, dimension_with_alias=dimensionslist_with_segments_and_aliases[n+1],ad_dimension_with_alias=ad_dimensionslist_with_segments_and_aliases[n+1], dimension=dimension,
                                  sum_metric_string=sum_metric_string, date0=str(date0),updimensions=updm,
                                  metric_counts=metric_counts, date1=date['date1'], ad_metric_counts=ad_metric_counts,
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,
                                  dimension_without_aliases=list_with_time_dimensions_without_aliases[n+1],
-                                 date_field=date_field, ad_date_field=ad_date_field, metrics_string=metrics_string)
+                                 date_field=date_field, ad_date_field=ad_date_field, metrics_string=metrics_string,DB=DB)
 
                     array_dates.append(json.loads(get_clickhouse_data(q + ' ORDER BY {sort_column} {sort_order}  FORMAT JSON'.format(
                             sort_column=sort_column_in_query, sort_order=sort_order, limit=limit),'http://46.4.81.36:8123'))['data'])
@@ -504,7 +513,7 @@ def CHapi(request):
                                (SELECT {metric_counts},visitorId,{dimension_with_alias} FROM {table} WHERE 1 {filt} AND {updimensions} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimension},visitorId)
                                USING visitorId GROUP BY {group_by}'''
                     if is_two_tables:
-                        q = "SELECT {dimension},{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase_test.adstat
+                        q = "SELECT {dimension},{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM {DB}.adstat
                                                                                         WHERE 1 {filt} AND {site_filt} AND {updimensions} AND {ad_date_field}  BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
                     q = q.format(table=table, dimension_with_alias=dimensionslist_with_segments_and_aliases[n + 1],
                                  dimension=dimension,ad_dimension_with_alias=ad_dimensionslist_with_segments_and_aliases[n+1],
@@ -512,7 +521,7 @@ def CHapi(request):
                                  metric_counts=metric_counts, date1=date['date1'], ad_metric_counts=ad_metric_counts,
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,
                                  dimension_without_aliases=list_with_time_dimensions_without_aliases[n + 1],
-                                 date_field=date_field, ad_date_field=ad_date_field, metrics_string=metrics_string)
+                                 date_field=date_field, ad_date_field=ad_date_field, metrics_string=metrics_string,DB=DB)
 
                     array_dates.append(json.loads(
                         get_clickhouse_data(q + ' ORDER BY {sort_column} {sort_order}  FORMAT JSON'.format(
@@ -525,12 +534,12 @@ def CHapi(request):
                                                           GROUP BY {group_by}'''
                     # Если в запросе к апи были запрошены рекламные показатели или поля, которые есть только в таблице adstat, то объединяем таблицы с хитами и визитами с adstat
                     if is_two_tables:
-                        q = "SELECT {dimension},{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase_test.adstat
+                        q = "SELECT {dimension},{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM {DB}.adstat
                                                WHERE 1 {filt} AND {site_filt} AND {updimensions} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
                     q = q.format(table=table, dimension_with_alias=dimensionslist_with_segments_and_aliases[n+1], dimension=dimension,
                                  metric_counts=metric_counts, date1=date['date1'], ad_metric_counts=ad_metric_counts,updimensions=updm,
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,ad_dimension_with_alias=ad_dimensionslist_with_segments_and_aliases[n+1],
-                                 date_field=date_field, ad_date_field=ad_date_field, metrics_string=metrics_string)
+                                 date_field=date_field, ad_date_field=ad_date_field, metrics_string=metrics_string,DB=DB)
                     print(q)
                     array_dates.append(json.loads(get_clickhouse_data(q+' ORDER BY {sort_column} {sort_order} FORMAT JSON'
                                                                       .format(sort_column=sort_column_in_query,sort_order=sort_order), 'http://46.4.81.36:8123'))['data'])
@@ -647,12 +656,12 @@ def CHapi(request):
                                 WHERE 1 {filt} AND {site_filt} AND {date_filt}
                                '''
                 if is_two_tables:
-                    q="""SELECT CAST(uniq({dimension}),'Int') as h{dimension} FROM (SELECT DISTINCT {dimension_with_alias} FROM CHdatabase_test.hits_with_visits
-                            WHERE 1 {filt} AND {site_filt} AND {date_filt}) ALL FULL OUTER JOIN (SELECT DISTINCT {ad_dimension_with_alias} FROM CHdatabase_test.adstat
+                    q="""SELECT CAST(uniq({dimension}),'Int') as h{dimension} FROM (SELECT DISTINCT {dimension_with_alias} FROM {DB}.hits_with_visits
+                            WHERE 1 {filt} AND {site_filt} AND {date_filt}) ALL FULL OUTER JOIN (SELECT DISTINCT {ad_dimension_with_alias} FROM {DB}.adstat
                             WHERE 1 {filt} AND {site_filt} AND {ad_date_filt}) USING {dimension}"""
                 q=q.format(dimension_counts=dimension_counts[dim_num],dimension=dimensionslist[dim_num],date_filt=date_filt,
                         site_filt=site_filt,dimension_with_alias=dimensionslist_with_segments_and_aliases[dim_num],
-                           ad_dimension_with_alias=ad_dimensionslist_with_segments_and_aliases[dim_num], filt=filt,ad_date_filt=ad_date_filt,table=table)
+                           ad_dimension_with_alias=ad_dimensionslist_with_segments_and_aliases[dim_num], filt=filt,ad_date_filt=ad_date_filt,table=table,DB=DB)
                 print(q)
             try:
                 a.update(json.loads(get_clickhouse_data(q+' FORMAT JSON', 'http://46.4.81.36:8123'))['data'][0])
@@ -688,16 +697,16 @@ def CHapi(request):
                 #Если запрошены две таблицы, объединяем полученные показатели ля hits_with_visits c показателями для adstat
             if is_two_tables:
                 q_total = "SELECT {metrics_string} FROM (" + q_total + """) ALL FULL OUTER JOIN (SELECT 1 as l,{ad_metric_counts}
-                    FROM CHdatabase_test.adstat
+                    FROM {DB}.adstat
                     WHERE {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filt}) USING l """
 
                 q =  "SELECT {metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT 1 as l,{ad_metric_counts}
-                    FROM CHdatabase_test.adstat
+                    FROM {DB}.adstat
                     WHERE 1 {filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filt}) USING l"""
             q=q.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,site_filt=site_filt,metrics_string=metrics_string,
-                                          filt=filt, sort_order=sort_order,table=table,ad_date_field=ad_date_field,ad_metric_counts=ad_metric_counts,date_field=date_field)
+                                          filt=filt, sort_order=sort_order,table=table,ad_date_field=ad_date_field,ad_metric_counts=ad_metric_counts,date_field=date_field,DB=DB)
             q_total=q_total.format(date1=date['date1'], date2=date['date2'], metric_counts=metric_counts,site_filt=site_filt,metrics_string=metrics_string,
-                                          filt=filt, sort_order=sort_order,table=table,ad_date_field=ad_date_field,ad_metric_counts=ad_metric_counts,date_field=date_field)
+                                          filt=filt, sort_order=sort_order,table=table,ad_date_field=ad_date_field,ad_metric_counts=ad_metric_counts,date_field=date_field,DB=DB)
             print(q)
             try:
                 total = json.loads(get_clickhouse_data(q_total + ' FORMAT JSON', 'http://46.4.81.36:8123'))['data'][0]
@@ -733,11 +742,11 @@ def CHapi(request):
                     '''
             if is_two_tables:
                 t = "SELECT {metrics_string} FROM ("+t+""") ALL FULL OUTER JOIN ( SELECT 1 as l,{ad_metric_counts}
-                        FROM CHdatabase_test.adstat WHERE 1 {filt} AND {site_filt}
+                        FROM {DB}.adstat WHERE 1 {filt} AND {site_filt}
                         AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' ) USING l"""
             t=t.format(metric_counts=metric_counts,
                 date1=date['date1'],site_filt=site_filt,date2=date['date2'], filt=filt,metrics_string=metrics_string,
-                ad_date_field=ad_date_field,table=table, date_field=date_field,ad_metric_counts=ad_metric_counts)
+                ad_date_field=ad_date_field,table=table, date_field=date_field,ad_metric_counts=ad_metric_counts,DB=DB)
 
             ar_d.append(json.loads(get_clickhouse_data(t+ ' FORMAT JSON', 'http://46.4.81.36:8123'))['data'])
         #Объкдиняем данные для разных таблиц, если выбор происходит из нескольких таблиц
@@ -797,7 +806,7 @@ def CHapi(request):
                                                                       WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
                                                                     '''
                 if is_two_tables:
-                    q="SELECT label,segment,{metrics_string} FROM ("+q+""") ALL FULL OUTER JOIN (SELECT '{label_val}' as label,'{segment_val}' as segment,{ad_metric_counts} FROM CHdatabase_test.adstat
+                    q="SELECT label,segment,{metrics_string} FROM ("+q+""") ALL FULL OUTER JOIN (SELECT '{label_val}' as label,'{segment_val}' as segment,{ad_metric_counts} FROM {DB}.adstat
                                                                       WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}) USING label LIMIT 1"""
                 q=q.format(label_val=seg_label,
                     site_filt=site_filt,
@@ -808,7 +817,7 @@ def CHapi(request):
                     ad_metric_counts=ad_metric_counts,
                     date1=date['date1'],metrics_string=metrics_string,
                     date2=date['date2'], filt=filt,
-                    table=table, date_field=date_field)
+                    table=table, date_field=date_field,DB=DB)
                 print(q)
                 array_dates.append(json.loads(get_clickhouse_data(q+ " FORMAT JSON", 'http://46.4.81.36:8123'))['data'])
 
@@ -855,20 +864,20 @@ def CHapi(request):
                 for date in relative_period:
                     date0=(datetime.strptime(date['date1'], time_format) - timedelta(days=int(attribution_lookup_period))).strftime(time_format)
                     q = '''SELECT alias as {dimension},{sum_metric_string} FROM (SELECT visitorId,any({dimension_without_aliases}) as alias FROM {table}
-                    WHERE  visitorId IN (SELECT visitorId FROM CHdatabase_test.hits_with_visits WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
+                    WHERE  visitorId IN (SELECT visitorId FROM {DB}.hits_with_visits WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}')
                     AND {date_field} BETWEEN '{date0}' AND '{date2}' {filt} GROUP BY visitorId)
                     ALL INNER JOIN
                     (SELECT {metric_counts},visitorId FROM {table} WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY visitorId)
                     USING visitorId GROUP BY {group_by}'''
                     if is_two_tables:
-                        q = "SELECT {dimension},{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase_test.adstat
+                        q = "SELECT {dimension},{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM {DB}.adstat
                                                 WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
                     q = q.format(table=table, dimension_with_alias=dim_with_alias[0],ad_dimension_with_alias=ad_dim_with_alias[0], dimension=dim[0],
                                  sum_metric_string=sum_metric_string,date0=str(date0),
                                  metric_counts=metric_counts, date1=date['date1'], ad_metric_counts=ad_metric_counts,
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,
                                  dimension_without_aliases=list_with_time_dimensions_without_aliases[0],
-                                 date_field=date_field, ad_date_field=ad_date_field, metrics_string=metrics_string)
+                                 date_field=date_field, ad_date_field=ad_date_field, metrics_string=metrics_string,DB=DB)
                     array_dates.append(json.loads(get_clickhouse_data(q + ' ORDER BY {sort_column} {sort_order} {limit} FORMAT JSON'.format(
                             sort_column=sort_column_in_query, sort_order=sort_order, limit=limit),'http://46.4.81.36:8123'))['data'])
 
@@ -883,12 +892,12 @@ def CHapi(request):
                     USING visitorId
                     GROUP BY {group_by}'''
                     if is_two_tables:
-                        q="SELECT {dimension},{metrics_string} FROM ("+q+""") ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase_test.adstat
+                        q="SELECT {dimension},{metrics_string} FROM ("+q+""") ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM {DB}.adstat
                             WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
                     q = q.format(table=table, dimension_with_alias=dim_with_alias[0],ad_dimension_with_alias=ad_dim_with_alias[0], dimension=dim[0],sum_metric_string=sum_metric_string,
                                  metric_counts=metric_counts, date1=date['date1'], ad_metric_counts=ad_metric_counts,
                                  site_filt=site_filt, date2=date['date2'], filt=filt, group_by=group_by,dimension_without_aliases=list_with_time_dimensions_without_aliases[0],
-                                 date_field=date_field, ad_date_field=ad_date_field, metrics_string=metrics_string)
+                                 date_field=date_field, ad_date_field=ad_date_field, metrics_string=metrics_string,DB=DB)
                     print(q+' ORDER BY {sort_column} {sort_order} {limit} FORMAT JSON'.format(sort_column=sort_column_in_query,sort_order=sort_order,limit=limit))
                     array_dates.append(json.loads(get_clickhouse_data(q+' ORDER BY {sort_column} {sort_order} {limit} FORMAT JSON'.format(sort_column=sort_column_in_query,sort_order=sort_order,limit=limit), 'http://46.4.81.36:8123'))['data'])
             else:
@@ -898,10 +907,10 @@ def CHapi(request):
                                        GROUP BY {group_by}'''
                     #Если в запросе к апи были запрошены рекламные показатели или поля, которые есть только в таблице adstat, то объединяем таблицы с хитами и визитами с adstat
                     if is_two_tables:
-                        q="SELECT {dimension},{metrics_string} FROM ("+q+""") ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM CHdatabase_test.adstat
+                        q="SELECT {dimension},{metrics_string} FROM ("+q+""") ALL FULL OUTER JOIN (SELECT {ad_dimension_with_alias},{ad_metric_counts} FROM {DB}.adstat
                             WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {group_by}) USING {dimension}"""
                     q=q.format(table=table,dimension_with_alias=dim_with_alias[0],ad_dimension_with_alias=ad_dim_with_alias[0],dimension=dim[0], metric_counts=metric_counts,date1=date['date1'],ad_metric_counts=ad_metric_counts,
-                        site_filt=site_filt,date2=date['date2'], filt=filt,group_by=group_by,date_field=date_field,ad_date_field=ad_date_field,metrics_string=metrics_string)
+                        site_filt=site_filt,date2=date['date2'], filt=filt,group_by=group_by,date_field=date_field,ad_date_field=ad_date_field,metrics_string=metrics_string,DB=DB)
 
                     #Если текущий параметр содержит в себе _path то изменяе строку запроса
                     if '_path' in dim[0]:
@@ -990,7 +999,7 @@ def CHapi(request):
                                                                                       WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}
                                                                                     '''
                 if is_two_tables:
-                    q = "SELECT label,segment,{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT '{label_val}' as label,'{segment_val}' as segment,{ad_metric_counts} FROM CHdatabase_test.adstat
+                    q = "SELECT label,segment,{metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT '{label_val}' as label,'{segment_val}' as segment,{ad_metric_counts} FROM {DB}.adstat
                                                                                       WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {seg_filt}) USING label LIMIT 1"""
                 q = q.format(label_val=seg_label,
                              site_filt=site_filt,
@@ -1001,7 +1010,7 @@ def CHapi(request):
                              ad_metric_counts=ad_metric_counts,
                              date1=date['date1'], metrics_string=metrics_string,
                              date2=date['date2'], filt=filt,
-                             table=table, date_field=date_field)
+                             table=table, date_field=date_field,DB=DB)
                 print(q)
                 array_dates.append(json.loads(get_clickhouse_data(q +" FORMAT JSON", 'http://46.4.81.36:8123'))['data'])
                 if array_dates[counter] == []:
@@ -1266,7 +1275,7 @@ def CHapi(request):
 
             try:
                 if json.loads(get_clickhouse_data(
-                        'SELECT idSite FROM CHdatabase_test.hits_with_visits WHERE idSite={idSite} LIMIT 1 FORMAT JSON'.format(
+                        'SELECT idSite FROM {DB}.hits_with_visits WHERE idSite={idSite} LIMIT 1 FORMAT JSON'.format(DB=DB,
                                 idSite=json.loads(requests.get(
                                         stas_api+'profiles/{profile_id}/?all=1'.format(
                                                 profile_id=profile_id), headers=headers).content.decode('utf-8'))[
@@ -1283,7 +1292,7 @@ def CHapi(request):
         except:
             relative_period=period
             date_field = 'serverDate'
-        table = 'CHdatabase_test.hits_with_visits'
+        table = DB+'.hits_with_visits'
 
         #Формируем массив с count() для каждого параметра
         dimension_counts=[]
@@ -1336,7 +1345,7 @@ def CHapi(request):
             dimension_counts=ad_dimension_counts
             dimensionslist_with_segments_and_aliases=ad_dimensionslist_with_segments_and_aliases
             list_with_time_dimensions_without_aliases=ad_list_with_time_dimensions_without_aliases
-            table='CHdatabase_test.adstat'
+            table=DB+'.adstat'
             metric_counts=','.join(ad_metric_counts_list)
             date_field=ad_date_field
             date_filt=ad_date_filt
@@ -1384,7 +1393,10 @@ def CHapi(request):
 
         resp['metric_sums']={}
         total,total_filtered,resp['metric_sums']['dates'] = AddMetricSums(period,metric_counts_list,filt,metrics,sort_order,table)
-        stats=AddStats2(dimensionslist_with_segments,dimensionslist_with_segments_and_aliases,ad_dimensionslist_with_segments_and_aliases,metric_counts,filt,limit,period,metrics,table,date_filt)
+        if site_filt==' 0':
+            stats=[]
+        else:
+            stats=AddStats2(dimensionslist_with_segments,dimensionslist_with_segments_and_aliases,ad_dimensionslist_with_segments_and_aliases,metric_counts,filt,limit,period,metrics,table,date_filt)
         # Добавляем stats
         resp['stats']=stats
         pprint.pprint(resp)
@@ -1444,10 +1456,10 @@ def segment_stat(request):
                     operator = j
                     try:
                         int(sub_str.partition(j)[2])
-                        print('SELECT {par}=={val} FROM CHdatabase_test.hits_with_visits LIMIT 1 FORMAT JSON'.format(
+                        print('SELECT {par}=={val} FROM {DB}.hits_with_visits LIMIT 1 FORMAT JSON'.format(DB=DB,
                                 par=sub_str.partition(j)[0].replace('?',','), val=sub_str.partition(j)[2]))
                         json.loads(get_clickhouse_data(
-                            'SELECT {par}=={val} FROM CHdatabase_test.hits_with_visits LIMIT 1 FORMAT JSON'.format(
+                            'SELECT {par}=={val} FROM {DB}.hits_with_visits LIMIT 1 FORMAT JSON'.format(DB=DB,
                                 par=sub_str.partition(j)[0].replace('?',','), val=sub_str.partition(j)[2]), 'http://46.4.81.36:8123'))
 
                         second_arg=sub_str.partition(j)[2]
@@ -1543,7 +1555,7 @@ def segment_stat(request):
                 site_filter = ' 1'
             try:
                 if json.loads(get_clickhouse_data(
-                        'SELECT idSite FROM CHdatabase_test.hits_with_visits WHERE idSite={idSite} LIMIT 1 FORMAT JSON'.format(
+                        'SELECT idSite FROM '+DB+'.hits_with_visits WHERE idSite={idSite} LIMIT 1 FORMAT JSON'.format(
                                 idSite=json.loads(requests.get(
                                         stas_api+'profiles/{profile_id}/?all=1'.format(
                                                 profile_id=profile_id), headers=headers).content.decode('utf-8'))[
@@ -1561,16 +1573,16 @@ def segment_stat(request):
             relative_date2= response['date2']
             date_field = 'serverDate'
         q_total="""
-        SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM CHdatabase_test.hits_with_visits WHERE {date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filter} FORMAT JSON
-        """.format(date1=relative_date1,date2=relative_date2,date_field=date_field,site_filter=site_filter)
+        SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM {DB}.hits_with_visits WHERE {date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filter} FORMAT JSON
+        """.format(date1=relative_date1,date2=relative_date2,date_field=date_field,site_filter=site_filter,DB=DB)
         print(q_total)
         try:
             total=json.loads(get_clickhouse_data(q_total, 'http://46.4.81.36:8123'))['data'][0]
         except:
             total={'visitors':0,'visits':0}
         q = """
-                SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM CHdatabase_test.hits_with_visits WHERE {date_field} BETWEEN '{date1}' AND '{date2}' AND {filter} AND {site_filter} FORMAT JSON
-                """.format(date1=relative_date1, date2=relative_date2,filter=filter,date_field=date_field,site_filter=site_filter)
+                SELECT CAST(uniq(visitorId),'Int') as visitors,CAST(uniq(idVisit),'Int') as visits FROM {DB}.hits_with_visits WHERE {date_field} BETWEEN '{date1}' AND '{date2}' AND {filter} AND {site_filter} FORMAT JSON
+                """.format(date1=relative_date1, date2=relative_date2,filter=filter,date_field=date_field,site_filter=site_filter,DB=DB)
         print(q)
         try:
             with_filter = json.loads(get_clickhouse_data(q, 'http://46.4.81.36:8123'))['data'][0]
@@ -1579,7 +1591,6 @@ def segment_stat(request):
         visitors={'total_sum':total['visitors'],'sum':with_filter['visitors']}
         visits={'total_sum':total['visits'],'sum':with_filter['visits']}
         response['segment_stat']={'visitors':visitors,'visits':visits}
-        print(response)
         return JsonResponse(response, safe=False, )
 
 @csrf_exempt
@@ -1598,12 +1609,12 @@ def diagram_stat(request):
                                     WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}'
                                    '''
             if is_two_tables:
-                q="""SELECT CAST(uniq({dimension}),'Int') as h{dimension} FROM (SELECT DISTINCT {dimensions_with_alias} FROM CHdatabase_test.hits_with_visits
-                                WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}') ALL FULL OUTER JOIN (SELECT DISTINCT {ad_dimensions_with_alias} FROM CHdatabase_test.adstat
+                q="""SELECT CAST(uniq({dimension}),'Int') as h{dimension} FROM (SELECT DISTINCT {dimensions_with_alias} FROM {DB}.hits_with_visits
+                                WHERE 1 {filt} AND {site_filt} AND {date_field} BETWEEN '{date1}' AND '{date2}') ALL FULL OUTER JOIN (SELECT DISTINCT {ad_dimensions_with_alias} FROM {DB}.adstat
                                 WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}') USING {dimension}"""
             q=q.format(dimension_counts=dimension_counts[dim_num],dimension=dimensionslist[dim_num],date_field=date_field,
                        ad_dimensions_with_alias=ad_dimensionslist_with_aliases[dim_num],dimensions_with_alias=dimensionslist_with_aliases[dim_num],
-                            site_filt=site_filt, filt=filt,ad_date_field=ad_date_field,table=table,date1=date1,date2=date2)
+                            site_filt=site_filt, filt=filt,ad_date_field=ad_date_field,table=table,date1=date1,date2=date2,DB=DB)
             print(q)
 
             try:
@@ -1664,20 +1675,20 @@ def diagram_stat(request):
         # Если запрошены две таблицы, объединяем полученные показатели ля hits_with_visits c показателями для adstat
         if is_two_tables:
             q_total = "SELECT {metrics_string} FROM (" + q_total + """) ALL FULL OUTER JOIN (SELECT 1 as l,{ad_metric_counts}
-                           FROM CHdatabase_test.adstat
+                           FROM {DB}.adstat
                            WHERE {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filt}) USING l """
 
             q = "SELECT {metrics_string} FROM (" + q + """) ALL FULL OUTER JOIN (SELECT 1 as l,{ad_metric_counts}
-                           FROM CHdatabase_test.adstat
+                           FROM {DB}.adstat
                            WHERE 1 {filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND {site_filt}) USING l"""
         q = q.format(date1=rel_date1, date2=rel_date2, metric_counts=metric_counts, site_filt=site_filt,
                      metrics_string=metrics_string,
                      filt=filt, sort_order=sort_order, table=table, ad_date_field=ad_date_field,
-                     ad_metric_counts=ad_metric_counts, date_field=date_field)
+                     ad_metric_counts=ad_metric_counts, date_field=date_field,DB=DB)
         q_total = q_total.format(date1=rel_date1, date2=rel_date2, metric_counts=metric_counts,
                                  site_filt=site_filt, metrics_string=metrics_string,
                                  filt=filt, sort_order=sort_order, table=table, ad_date_field=ad_date_field,
-                                 ad_metric_counts=ad_metric_counts, date_field=date_field)
+                                 ad_metric_counts=ad_metric_counts, date_field=date_field,DB=DB)
         print(q)
         try:
             a = json.loads(get_clickhouse_data(q_total + ' FORMAT JSON', 'http://46.4.81.36:8123'))['data'][0]
@@ -1714,12 +1725,12 @@ def diagram_stat(request):
         # Если в запросе к апи были запрошены рекламные показатели или поля, которые есть только в таблице adstat, то объединяем таблицы с хитами и визитами с adstat
         if is_two_tables:
             invis_metric_counts=metric_counts+","
-            q = "SELECT {dimensions},({metrics_string}) as metrics FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimensions_with_alias},{ad_metric_counts} FROM CHdatabase_test.adstat
+            q = "SELECT {dimensions},({metrics_string}) as metrics FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimensions_with_alias},{ad_metric_counts} FROM {DB}.adstat
                                     WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' GROUP BY {dimensions}) USING {dimensions}"""
         q = q.format(table=table, dimensions_with_alias=','.join(dim_with_aliases), dimensions=','.join(dimensionslist), metric_counts=metric_counts,
                      date1=date1, ad_metric_counts=ad_metric_counts,ad_dimensions_with_alias=','.join(ad_dim_with_aliases),
                      site_filt=site_filt, date2=date2, filt=filt, date_field=date_field,invis_metric_counts=invis_metric_counts,
-                     ad_date_field=ad_date_field, metrics_string=metrics_string)
+                     ad_date_field=ad_date_field, metrics_string=metrics_string,DB=DB)
         print(q+" ORDER BY {sort_column} {sort_order} {limit} FORMAT JSON".format(limit=limit,sort_column=sort_column,sort_order=sort_order))
         stats=json.loads(get_clickhouse_data(q+" ORDER BY {sort_column} {sort_order} {limit} FORMAT JSON".format(limit=limit,sort_column=sort_column,sort_order=sort_order), 'http://46.4.81.36:8123'))['data']
         #Если показатеь один, обрабатываем ошибку
@@ -1748,13 +1759,13 @@ def diagram_stat(request):
                                                                GROUP BY {dimensions}'''
                 # Если в запросе к апи были запрошены рекламные показатели или поля, которые есть только в таблице adstat, то объединяем таблицы с хитами и визитами с adstat
                 if is_two_tables:
-                    q = "SELECT {dimensions},arrayConcat(metrics,ad_metrics) as metrics FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimensions_with_alias},[{ad_metric_counts}] as ad_metrics FROM CHdatabase_test.adstat
+                    q = "SELECT {dimensions},arrayConcat(metrics,ad_metrics) as metrics FROM (" + q + """) ALL FULL OUTER JOIN (SELECT {ad_dimensions_with_alias},[{ad_metric_counts}] as ad_metrics FROM {DB}.adstat
                                                     WHERE 1 {filt} AND {site_filt} AND {ad_date_field} BETWEEN '{date1}' AND '{date2}' AND ({seg_filt}) GROUP BY {dimensions}) USING {dimensions}"""
                 q = q.format(table=table,dimensions_with_alias=','.join(dim_with_aliases),ad_dimensions_with_alias=','.join(ad_dim_with_aliases),
                              dimensions=','.join(dimensionslist), metric_counts=metric_counts,
                              date1=date1, ad_metric_counts=ad_metric_counts,seg_filt=FilterParse(seg_filt.replace("'",'')),
                              site_filt=site_filt, date2=date2, filt=filt, date_field=date_field,
-                             ad_date_field=ad_date_field)
+                             ad_date_field=ad_date_field,DB=DB)
                 print(q)
                 stat_with_segment = json.loads(get_clickhouse_data(q+" ORDER BY {sort_column} {sort_order} {limit} FORMAT JSON".format(limit=limit,sort_column=sort_column,sort_order=sort_order), 'http://46.4.81.36:8123'))['data']
                 for stat in stat_with_segment:
@@ -1970,7 +1981,7 @@ def diagram_stat(request):
                 date_field = 'serverDate'
             try:
                 if json.loads(get_clickhouse_data(
-                        'SELECT idSite FROM CHdatabase_test.hits_with_visits WHERE idSite={idSite} LIMIT 1 FORMAT JSON'.format(
+                        'SELECT idSite FROM {DB}.hits_with_visits WHERE idSite={idSite} LIMIT 1 FORMAT JSON'.format(DB=DB,
                                 idSite=json.loads(requests.get(
                                         stas_api+'profiles/{profile_id}/?all=1'.format(
                                                 profile_id=profile_id), headers=headers).content.decode('utf-8'))[
@@ -1989,7 +2000,7 @@ def diagram_stat(request):
             relative_date2= date2
             date_field = 'serverDate'
 
-        table = 'CHdatabase_test.hits_with_visits'
+        table = DB+'.hits_with_visits'
         list_of_adstat_par=['Clicks','Impressions','Cost','StatDate','idSite', 'AdCampaignId', 'AdBannerId', 'AdChannelId', 'AdDeviceType', 'AdGroupId', 'AdKeywordId',
                        'AdPosition', 'AdPositionType', 'AdRegionId', 'AdRetargetindId', 'AdPlacement', 'AdTargetId', 'AdvertisingSystem', 'DRF', 'campaignContent',
                        'campaignKeyword', 'campaignMedium', 'campaignName', 'campaignSource']
@@ -2032,7 +2043,7 @@ def diagram_stat(request):
         if metric_counts_list == []:
             dimensionslist_with_aliases=ad_dimensionslist_with_aliases
             dimension_counts=ad_dimension_counts
-            table = 'CHdatabase_test.adstat'
+            table = DB+'.adstat'
             metric_counts = ','.join(ad_metric_counts_list)
             date_field = ad_date_field
         if filt!=' AND 0':
@@ -2069,7 +2080,10 @@ def diagram_stat(request):
         # Добавляем в выходной словарь параметр metric_sums
         resp['metric_sums']={}
         resp['metric_sums']['dates'] = AddMetricSums(relative_date1,relative_date2,metric_counts_list,filt,metrics,sort_order,table)
-        stats=AddStats2(dimensionslist,dimensionslist_with_aliases,ad_dimensionslist_with_aliases,metric_counts,filt,limit,having,relative_date1,relative_date2,metrics,table)
+        if site_filt==' 0':
+            stats=[]
+        else:
+            stats=AddStats2(dimensionslist,dimensionslist_with_aliases,ad_dimensionslist_with_aliases,metric_counts,filt,limit,having,relative_date1,relative_date2,metrics,table)
         # Добавляем stats
         resp['stats']=stats
         pprint.pprint(resp)

@@ -20,7 +20,7 @@ from pandas import ExcelFile
 import copy
 from datetime import datetime, timedelta
 import pytz
-stas_api='https://api.smartanalytics.io/api/'
+from Word2Vec.settings import stas_api
 def get_all_dimensions():
     #Дописать
     all_dimensions=['visitorId','idVisit','deviceModel','serverDate','referrerTypeName',
@@ -116,11 +116,18 @@ def MetricCounts(metrics, headers,dimensionslist,is_all_segments,attribution_mod
     metric_counts = []
     ad_metric_counts = []
     metrics_string=','.join(metrics)
+
     for i in metrics:
         try:
             metric_counts.append(get_query_for_metric_name(i))
         except:
             pass
+        if 'all_conversion_cost' in i:
+            print(metrics_string)
+            metrics_string = metrics_string.replace('all_conversion_cost',"if(nb_conversions==0,0,floor(cost/nb_conversions,2)) as all_conversion_cost")
+            ad_metric_counts.append("CAST(sum(Cost),'Int') as cost")
+            metric_counts.append("CAST(sum(Type='goal'),'Int') as nb_conversions")
+            continue
         if 'calculated_metric' in i:
             calc_metr = json.loads(requests.get(
                 stas_api+'reference/calculated_metrics/{num}/?all=1'.format(
